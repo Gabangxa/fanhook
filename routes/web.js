@@ -377,11 +377,21 @@ router.get('/dashboard', (req, res) => {
     const SINK_ID = 'demo_sink_1';
     const headers = { 'Authorization': 'Bearer ' + API_KEY, 'Content-Type': 'application/json' };
 
+    // Escape user-supplied strings before inserting into innerHTML
+    function esc(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     function statusBadge(status) {
       const cls = status === 'delivered' ? 'badge-delivered'
                 : status === 'failed' ? 'badge-failed'
                 : 'badge-pending';
-      return '<span class="' + cls + '">' + status + '</span>';
+      return '<span class="' + cls + '">' + esc(status) + '</span>';
     }
 
     async function loadSinks() {
@@ -390,7 +400,7 @@ router.get('/dashboard', (req, res) => {
         const sinks = await res.json();
         const tbody = document.getElementById('sinks-body');
         tbody.innerHTML = sinks.map(s =>
-          '<tr><td><code>' + s.id + '</code></td><td>' + s.name + '</td><td>' + s.provider + '</td><td>' + s.created_at + '</td></tr>'
+          '<tr><td><code>' + esc(s.id) + '</code></td><td>' + esc(s.name) + '</td><td>' + esc(s.provider) + '</td><td>' + esc(s.created_at) + '</td></tr>'
         ).join('');
         document.getElementById('sinks-loading').style.display = 'none';
         document.getElementById('sinks-table').style.display = 'table';
@@ -399,29 +409,30 @@ router.get('/dashboard', (req, res) => {
       }
     }
 
+    function routeRow(r) {
+      const tr = document.createElement('tr');
+      tr.id = 'route-' + r.id;
+      tr.innerHTML = '<td><code>' + esc(r.id) + '</code></td><td>' + esc(r.url) + '</td><td>' + esc(r.created_at) + '</td>' +
+        '<td><button onclick="deleteRoute(\'' + esc(r.id) + '\')">Delete</button></td>';
+      return tr;
+    }
+
     async function loadRoutes() {
       try {
-        const res = await fetch('/api/sinks/' + SINK_ID + '/events', { headers });
-        // Routes are loaded separately
-      } catch {}
-
-      try {
-        // Fetch routes via a direct approach — list via events endpoint isn't ideal;
-        // use the sinks response which includes route info if extended, else we fetch events
-        // and note routes; for dashboard simplicity, maintain a local routes store
-        const res = await fetch('/api/sinks/' + SINK_ID + '/events', { headers });
-        // We'll load routes via the events and a dedicated internal approach
-      } catch {}
-
-      // Since there's no GET /routes endpoint, we embed route management via dashboard fetch trick
-      // We'll use the OpenAPI spec knowledge: routes are managed but not listed via a GET.
-      // For dashboard we'll show the "add route" form and provide delete by ID.
-      // Routes listing would require a dedicated endpoint — show a notice instead.
-      document.getElementById('routes-loading').style.display = 'none';
-      document.getElementById('routes-table').style.display = 'table';
-      document.getElementById('routes-body').innerHTML =
-        '<tr><td colspan="4" style="color:#475569;">Use the form below to add routes. ' +
-        'Route IDs are returned on creation — keep them to delete later.</td></tr>';
+        const res = await fetch('/api/sinks/' + SINK_ID + '/routes', { headers });
+        const routes = await res.json();
+        const tbody = document.getElementById('routes-body');
+        tbody.innerHTML = '';
+        if (routes.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" style="color:#475569;">No routes yet — add one below.</td></tr>';
+        } else {
+          routes.forEach(r => tbody.appendChild(routeRow(r)));
+        }
+        document.getElementById('routes-loading').style.display = 'none';
+        document.getElementById('routes-table').style.display = 'table';
+      } catch (e) {
+        document.getElementById('routes-loading').textContent = 'Failed to load routes.';
+      }
     }
 
     async function addRoute() {
@@ -437,16 +448,14 @@ router.get('/dashboard', (req, res) => {
         });
         const data = await res.json();
         if (res.ok) {
-          msgEl.textContent = 'Route added! ID: ' + data.id;
+          msgEl.textContent = 'Route added!';
           msgEl.style.display = 'block';
           msgEl.style.color = '#4ade80';
           document.getElementById('new-route-url').value = '';
-          // Append to table
-          const tr = document.createElement('tr');
-          tr.id = 'route-' + data.id;
-          tr.innerHTML = '<td><code>' + data.id + '</code></td><td>' + data.url + '</td><td>' + data.created_at + '</td>' +
-            '<td><button onclick="deleteRoute(\\'' + data.id + '\\')">Delete</button></td>';
-          document.getElementById('routes-body').appendChild(tr);
+          const tbody = document.getElementById('routes-body');
+          // Clear the empty-state row if present
+          if (tbody.querySelector('td[colspan]')) tbody.innerHTML = '';
+          tbody.appendChild(routeRow(data));
         } else {
           msgEl.textContent = 'Error: ' + (data.error || 'Unknown');
           msgEl.style.display = 'block';
@@ -467,6 +476,10 @@ router.get('/dashboard', (req, res) => {
         if (res.status === 204) {
           const el = document.getElementById('route-' + routeId);
           if (el) el.remove();
+          if (document.getElementById('routes-body').children.length === 0) {
+            document.getElementById('routes-body').innerHTML =
+              '<tr><td colspan="4" style="color:#475569;">No routes yet — add one below.</td></tr>';
+          }
         }
       } catch (e) {
         alert('Delete failed: ' + e.message);
@@ -480,9 +493,9 @@ router.get('/dashboard', (req, res) => {
         const tbody = document.getElementById('events-body');
         tbody.innerHTML = events.map(e =>
           '<tr>' +
-          '<td><code>' + e.id + '</code></td>' +
+          '<td><code>' + esc(e.id) + '</code></td>' +
           '<td>' + statusBadge(e.status) + '</td>' +
-          '<td>' + e.received_at + '</td>' +
+          '<td>' + esc(e.received_at) + '</td>' +
           '<td>' + (e.delivery_attempts ? e.delivery_attempts.length : 0) + '</td>' +
           '</tr>'
         ).join('');

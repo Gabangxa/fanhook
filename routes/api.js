@@ -102,6 +102,16 @@ router.get('/sinks/:sinkId/events', requireSinkAuth, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/sinks/:sinkId/routes — list routes for a sink
+// ---------------------------------------------------------------------------
+router.get('/sinks/:sinkId/routes', requireSinkAuth, (req, res) => {
+  const routes = db
+    .prepare('SELECT * FROM routes WHERE sink_id = ? ORDER BY created_at ASC')
+    .all(req.params.sinkId);
+  return res.json(routes);
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/sinks/:sinkId/routes — add a route to a sink
 // ---------------------------------------------------------------------------
 router.post('/sinks/:sinkId/routes', requireSinkAuth, (req, res) => {
