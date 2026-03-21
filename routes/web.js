@@ -223,7 +223,7 @@ router.get('/', (req, res) => {
     <!-- Try It -->
     <div style="margin-bottom: 3rem;">
       <h2 style="color:#94a3b8;">Try It</h2>
-      <p style="color:#94a3b8;">Send a test webhook to the demo sink:</p>
+      <p style="color:#94a3b8;">Send a test webhook to the demo sink (generic — no signature required):</p>
       <pre>curl -X POST https://your-app.replit.app/ingest/demo_sink_1 \\
   -H "Content-Type: application/json" \\
   -d '{"type":"payment_intent.succeeded","id":"evt_test_123"}'</pre>
@@ -236,14 +236,19 @@ router.get('/', (req, res) => {
         </div>
         <div>
           <label style="display:block;margin-bottom:0.25rem;color:#94a3b8;">Provider</label>
-          <select id="sink-provider">
+          <select id="sink-provider" onchange="toggleSecretField()">
             <option value="stripe">stripe</option>
             <option value="github">github</option>
             <option value="generic">generic</option>
           </select>
         </div>
+        <div id="secret-field-wrap">
+          <label style="display:block;margin-bottom:0.25rem;color:#94a3b8;">Webhook secret <span style="color:#f87171;">*</span></label>
+          <input type="text" id="sink-secret" placeholder="whsec_... or your GitHub secret" style="min-width:240px;" />
+        </div>
         <button onclick="createSink()">Create Sink</button>
       </div>
+      <p style="color:#475569;font-size:0.875rem;">Your <strong>api_key</strong> and <strong>ingest_url</strong> will appear below — save them, they won't be shown again.</p>
       <pre id="create-sink-result" style="display:none;"></pre>
     </div>
   </div>
@@ -253,9 +258,18 @@ router.get('/', (req, res) => {
   </footer>
 
   <script>
+    function toggleSecretField() {
+      const provider = document.getElementById('sink-provider').value;
+      const wrap = document.getElementById('secret-field-wrap');
+      wrap.style.display = provider === 'generic' ? 'none' : 'block';
+    }
+    // Set initial state
+    toggleSecretField();
+
     async function createSink() {
       const name = document.getElementById('sink-name').value.trim();
       const provider = document.getElementById('sink-provider').value;
+      const webhook_secret = document.getElementById('sink-secret').value.trim() || undefined;
       const resultEl = document.getElementById('create-sink-result');
 
       if (!name) {
@@ -267,11 +281,8 @@ router.get('/', (req, res) => {
       try {
         const res = await fetch('/api/sinks', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer demo_key_abc123'
-          },
-          body: JSON.stringify({ name, provider })
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, provider, webhook_secret })
         });
         const data = await res.json();
         resultEl.textContent = JSON.stringify(data, null, 2);

@@ -22,7 +22,7 @@ router.post('/:sinkId', (req, res) => {
   const rawBodyStr = req.body ? req.body.toString('utf8') : '';
 
   // Verify signature — skip strict check for generic providers
-  const { valid, error } = verifySignature(sink.provider, rawBodyStr, req.headers, null);
+  const { valid, error } = verifySignature(sink.provider, rawBodyStr, req.headers, sink.webhook_secret);
   if (!valid && sink.provider !== 'generic') {
     return res.status(401).json({ error: `Signature verification failed: ${error}` });
   }

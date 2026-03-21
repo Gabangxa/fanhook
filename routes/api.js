@@ -35,13 +35,22 @@ function requireSinkAuth(req, res, next) {
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/sinks — create a new sink
+// POST /api/sinks — create a new sink (no auth required — self-service registration)
 // ---------------------------------------------------------------------------
-router.post('/sinks', requireAuth, (req, res) => {
-  const { name, provider = 'generic' } = req.body || {};
+router.post('/sinks', (req, res) => {
+  const { name, provider = 'generic', webhook_secret } = req.body || {};
 
   if (!name) {
     return res.status(400).json({ error: 'name is required' });
+  }
+
+  const VALID_PROVIDERS = ['stripe', 'github', 'generic'];
+  if (!VALID_PROVIDERS.includes(provider)) {
+    return res.status(400).json({ error: `provider must be one of: ${VALID_PROVIDERS.join(', ')}` });
+  }
+
+  if ((provider === 'stripe' || provider === 'github') && !webhook_secret) {
+    return res.status(400).json({ error: `webhook_secret is required for provider '${provider}'` });
   }
 
   const sinkId = uuidv4();
@@ -49,14 +58,15 @@ router.post('/sinks', requireAuth, (req, res) => {
   const createdAt = new Date().toISOString();
 
   db.prepare(`
-    INSERT INTO sinks (id, name, provider, api_key, created_at)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(sinkId, name, provider, apiKey, createdAt);
+    INSERT INTO sinks (id, name, provider, api_key, webhook_secret, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(sinkId, name, provider, apiKey, webhook_secret || null, createdAt);
 
   return res.status(201).json({
     sink_id: sinkId,
     ingest_url: `/ingest/${sinkId}`,
     api_key: apiKey,
+    webhook_secret: webhook_secret || null,
   });
 });
 

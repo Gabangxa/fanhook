@@ -13,6 +13,7 @@ db.exec(`
     name TEXT NOT NULL,
     provider TEXT NOT NULL DEFAULT 'generic',
     api_key TEXT NOT NULL,
+    webhook_secret TEXT,
     created_at TEXT NOT NULL
   );
 
@@ -44,6 +45,13 @@ db.exec(`
     FOREIGN KEY (event_id) REFERENCES events(id)
   );
 `);
+
+// Migration: add webhook_secret column to existing databases
+try {
+  db.exec('ALTER TABLE sinks ADD COLUMN webhook_secret TEXT');
+} catch (_) {
+  // Column already exists — safe to ignore
+}
 
 // Seed demo data if not already present
 const existingSink = db.prepare('SELECT id FROM sinks WHERE id = ?').get('demo_sink_1');
