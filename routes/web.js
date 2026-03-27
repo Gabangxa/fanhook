@@ -36,120 +36,124 @@ router.get('/openapi.json', (req, res) => {
 router.get('/docs', (req, res) => {
   const html = `${HEAD('FanHook API Docs')}
 ${NAV}
-<div class="container">
+<div class="docs-layout">
 
-  <div class="fade-in" style="margin-top:2.5rem;">
-    <div class="section-label">Reference</div>
-    <h1 class="section-title">API Documentation</h1>
-    <p style="color:var(--text-secondary);max-width:560px;margin-bottom:2.5rem;">
-      Management endpoints live under <code>/api</code> (Bearer auth). Ingest endpoints live under <code>/ingest</code> (signature-verified).
-    </p>
-  </div>
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar-title">Navigation</div>
+    <a href="#sinks" class="docs-sidebar-link">Sinks</a>
+    <a href="#routes" class="docs-sidebar-link">Routes</a>
+    <a href="#billing" class="docs-sidebar-link">Billing</a>
+    <a href="#ingest" class="docs-sidebar-link">Ingest</a>
+    <a href="#response-codes" class="docs-sidebar-link">Response Codes</a>
+  </aside>
 
-  <div class="endpoint-group fade-in fade-in-d1">
-    <div class="endpoint-group-title">
-      <span style="font-size:1.1rem;">&#9679;</span> Sinks
+  <main class="docs-main">
+
+    <div class="fade-in" style="margin-top:0.5rem;">
+      <div class="section-label">Reference</div>
+      <h1 class="section-title">API Documentation</h1>
+      <p style="color:var(--text-secondary);max-width:560px;margin-bottom:2.5rem;">
+        Management endpoints live under <code>/api</code> (Bearer auth). Ingest endpoints live under <code>/ingest</code> (signature-verified).
+      </p>
     </div>
 
-    <div class="endpoint-card">
-      <div><span class="method method-post">POST</span></div>
-      <div>
-        <div class="endpoint-path">/api/sinks <span class="endpoint-auth">Bearer</span></div>
-        <div class="endpoint-desc">Create a new sink. Body: <code>{"name":"...","provider":"stripe|github|generic"}</code></div>
+    <details id="sinks" class="docs-details fade-in fade-in-d1" open>
+      <summary class="endpoint-group-title">
+        <span class="docs-chevron">&#9656;</span> Sinks
+      </summary>
+      <div class="endpoint-card">
+        <div><span class="method method-post">POST</span></div>
+        <div>
+          <div class="endpoint-path">/api/sinks <span class="endpoint-auth">Bearer</span></div>
+          <div class="endpoint-desc">Create a new sink. Body: <code>{"name":"...","provider":"stripe|github|generic"}</code></div>
+        </div>
       </div>
-    </div>
-
-    <div class="endpoint-card">
-      <div><span class="method method-get">GET</span></div>
-      <div>
-        <div class="endpoint-path">/api/sinks <span class="endpoint-auth">Bearer</span></div>
-        <div class="endpoint-desc">List sinks for the authenticated API key.</div>
+      <div class="endpoint-card">
+        <div><span class="method method-get">GET</span></div>
+        <div>
+          <div class="endpoint-path">/api/sinks <span class="endpoint-auth">Bearer</span></div>
+          <div class="endpoint-desc">List sinks for the authenticated API key.</div>
+        </div>
       </div>
-    </div>
-
-    <div class="endpoint-card">
-      <div><span class="method method-get">GET</span></div>
-      <div>
-        <div class="endpoint-path">/api/sinks/:id/events <span class="endpoint-auth">Bearer</span></div>
-        <div class="endpoint-desc">Last 50 events with delivery attempts.</div>
+      <div class="endpoint-card">
+        <div><span class="method method-get">GET</span></div>
+        <div>
+          <div class="endpoint-path">/api/sinks/:id/events <span class="endpoint-auth">Bearer</span></div>
+          <div class="endpoint-desc">Last 50 events with delivery attempts.</div>
+        </div>
       </div>
-    </div>
-  </div>
+    </details>
 
-  <div class="endpoint-group fade-in fade-in-d2">
-    <div class="endpoint-group-title">
-      <span style="font-size:1.1rem;">&#9679;</span> Routes
-    </div>
-
-    <div class="endpoint-card">
-      <div><span class="method method-post">POST</span></div>
-      <div>
-        <div class="endpoint-path">/api/sinks/:id/routes <span class="endpoint-auth">Bearer</span></div>
-        <div class="endpoint-desc">Add a destination URL. Body: <code>{"url":"https://..."}</code></div>
+    <details id="routes" class="docs-details fade-in fade-in-d2" open>
+      <summary class="endpoint-group-title">
+        <span class="docs-chevron">&#9656;</span> Routes
+      </summary>
+      <div class="endpoint-card">
+        <div><span class="method method-post">POST</span></div>
+        <div>
+          <div class="endpoint-path">/api/sinks/:id/routes <span class="endpoint-auth">Bearer</span></div>
+          <div class="endpoint-desc">Add a destination URL. Body: <code>{"url":"https://..."}</code></div>
+        </div>
       </div>
-    </div>
-
-    <div class="endpoint-card">
-      <div><span class="method method-delete">DELETE</span></div>
-      <div>
-        <div class="endpoint-path">/api/sinks/:id/routes/:routeId <span class="endpoint-auth">Bearer</span></div>
-        <div class="endpoint-desc">Remove a route. Returns 204.</div>
+      <div class="endpoint-card">
+        <div><span class="method method-delete">DELETE</span></div>
+        <div>
+          <div class="endpoint-path">/api/sinks/:id/routes/:routeId <span class="endpoint-auth">Bearer</span></div>
+          <div class="endpoint-desc">Remove a route. Returns 204.</div>
+        </div>
       </div>
-    </div>
-  </div>
+    </details>
 
-  <div class="endpoint-group fade-in fade-in-d3">
-    <div class="endpoint-group-title">
-      <span style="font-size:1.1rem;">&#9679;</span> Billing
-    </div>
-
-    <div class="endpoint-card">
-      <div><span class="method method-get">GET</span></div>
-      <div>
-        <div class="endpoint-path">/api/billing/status <span class="endpoint-auth">Bearer</span></div>
-        <div class="endpoint-desc">Current tier, events used this month, and limit.</div>
+    <details id="billing" class="docs-details fade-in fade-in-d3" open>
+      <summary class="endpoint-group-title">
+        <span class="docs-chevron">&#9656;</span> Billing
+      </summary>
+      <div class="endpoint-card">
+        <div><span class="method method-get">GET</span></div>
+        <div>
+          <div class="endpoint-path">/api/billing/status <span class="endpoint-auth">Bearer</span></div>
+          <div class="endpoint-desc">Current tier, events used this month, and limit.</div>
+        </div>
       </div>
-    </div>
-
-    <div class="endpoint-card">
-      <div><span class="method method-post">POST</span></div>
-      <div>
-        <div class="endpoint-path">/api/billing/checkout <span class="endpoint-auth">Bearer</span></div>
-        <div class="endpoint-desc">Create a Stripe Checkout session to upgrade to Starter ($9/mo). Returns <code>{"url":"..."}</code>.</div>
+      <div class="endpoint-card">
+        <div><span class="method method-post">POST</span></div>
+        <div>
+          <div class="endpoint-path">/api/billing/checkout <span class="endpoint-auth">Bearer</span></div>
+          <div class="endpoint-desc">Create a Stripe Checkout session to upgrade to Starter ($9/mo). Returns <code>{"url":"..."}</code>.</div>
+        </div>
       </div>
-    </div>
-  </div>
+    </details>
 
-  <div class="endpoint-group fade-in fade-in-d4">
-    <div class="endpoint-group-title">
-      <span style="font-size:1.1rem;">&#9679;</span> Ingest
-    </div>
-
-    <div class="endpoint-card">
-      <div><span class="method method-post">POST</span></div>
-      <div>
-        <div class="endpoint-path">/ingest/:sinkId <span class="endpoint-auth">Signature</span></div>
-        <div class="endpoint-desc">Receive a webhook. FanHook verifies the provider signature and fans out to all routes. Returns <code>429</code> when monthly limit is reached.</div>
+    <details id="ingest" class="docs-details fade-in fade-in-d4" open>
+      <summary class="endpoint-group-title">
+        <span class="docs-chevron">&#9656;</span> Ingest
+      </summary>
+      <div class="endpoint-card">
+        <div><span class="method method-post">POST</span></div>
+        <div>
+          <div class="endpoint-path">/ingest/:sinkId <span class="endpoint-auth">Signature</span></div>
+          <div class="endpoint-desc">Receive a webhook. FanHook verifies the provider signature and fans out to all routes. Returns <code>429</code> when monthly limit is reached.</div>
+        </div>
       </div>
-    </div>
-  </div>
+    </details>
 
-  <div class="fade-in fade-in-d4" style="margin-top:1rem;">
-    <div class="endpoint-group-title">
-      <span style="font-size:1.1rem;">&#9679;</span> Response Codes
-    </div>
-    <div class="response-codes">
-      <div class="response-code"><span class="code-num code-2xx">200</span> <span style="color:var(--text-secondary)">OK</span></div>
-      <div class="response-code"><span class="code-num code-2xx">201</span> <span style="color:var(--text-secondary)">Created</span></div>
-      <div class="response-code"><span class="code-num code-2xx">204</span> <span style="color:var(--text-secondary)">No Content</span></div>
-      <div class="response-code"><span class="code-num code-4xx">400</span> <span style="color:var(--text-secondary)">Bad Request</span></div>
-      <div class="response-code"><span class="code-num code-4xx">401</span> <span style="color:var(--text-secondary)">Unauthorized</span></div>
-      <div class="response-code"><span class="code-num code-4xx">403</span> <span style="color:var(--text-secondary)">Forbidden</span></div>
-      <div class="response-code"><span class="code-num code-4xx">404</span> <span style="color:var(--text-secondary)">Not Found</span></div>
-      <div class="response-code"><span class="code-num code-4xx">429</span> <span style="color:var(--text-secondary)">Rate Limited</span></div>
-    </div>
-  </div>
+    <details id="response-codes" class="docs-details fade-in fade-in-d4" open>
+      <summary class="endpoint-group-title">
+        <span class="docs-chevron">&#9656;</span> Response Codes
+      </summary>
+      <div class="response-codes">
+        <div class="response-code"><span class="code-num code-2xx">200</span> <span style="color:var(--text-secondary)">OK</span></div>
+        <div class="response-code"><span class="code-num code-2xx">201</span> <span style="color:var(--text-secondary)">Created</span></div>
+        <div class="response-code"><span class="code-num code-2xx">204</span> <span style="color:var(--text-secondary)">No Content</span></div>
+        <div class="response-code"><span class="code-num code-4xx">400</span> <span style="color:var(--text-secondary)">Bad Request</span></div>
+        <div class="response-code"><span class="code-num code-4xx">401</span> <span style="color:var(--text-secondary)">Unauthorized</span></div>
+        <div class="response-code"><span class="code-num code-4xx">403</span> <span style="color:var(--text-secondary)">Forbidden</span></div>
+        <div class="response-code"><span class="code-num code-4xx">404</span> <span style="color:var(--text-secondary)">Not Found</span></div>
+        <div class="response-code"><span class="code-num code-4xx">429</span> <span style="color:var(--text-secondary)">Rate Limited</span></div>
+      </div>
+    </details>
 
+  </main>
 </div>
 ${FOOTER}
 </body></html>`;
@@ -338,6 +342,25 @@ ${NAV}
     <div id="billing-badge" style="display:none;padding:0.35rem 1rem;border-radius:999px;font-size:0.8rem;font-weight:700;letter-spacing:0.04em;"></div>
   </div>
 
+  <div id="stats-section" class="stats-grid fade-in" style="display:none;">
+    <div class="stat-card">
+      <div class="stat-label">Tier</div>
+      <div class="stat-value" id="stat-tier">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Events Used</div>
+      <div class="stat-value" id="stat-events">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Monthly Limit</div>
+      <div class="stat-value" id="stat-limit">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Usage</div>
+      <div class="stat-value" id="stat-pct">—</div>
+    </div>
+  </div>
+
   <div id="onboarding" class="onboarding-card" style="display:none;">
     <h2>&#128640; Getting started</h2>
     <ol>
@@ -471,6 +494,12 @@ ${FOOTER}
       badge.style.color = data.tier === 'starter' ? '#4ade80' : '#94a3b8';
       badge.style.border = '1px solid ' + (data.tier === 'starter' ? 'rgba(74,222,128,0.2)' : 'rgba(100,116,139,0.15)');
       badge.style.display = 'inline-block';
+
+      document.getElementById('stats-section').style.display = 'grid';
+      document.getElementById('stat-tier').textContent = data.tier.charAt(0).toUpperCase() + data.tier.slice(1);
+      document.getElementById('stat-events').textContent = data.events_this_month.toLocaleString();
+      document.getElementById('stat-limit').textContent = data.events_limit.toLocaleString();
+      document.getElementById('stat-pct').textContent = data.usage_pct + '%';
 
       document.getElementById('usage-section').style.display = 'block';
       document.getElementById('usage-text').textContent =

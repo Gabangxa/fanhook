@@ -666,6 +666,93 @@ button:hover {
   border: 1px solid rgba(248, 113, 113, 0.2);
 }
 
+/* ---- Docs Layout ---- */
+
+.docs-layout {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 2rem;
+  max-width: 1060px;
+  margin: auto;
+  padding: 2rem 1.5rem;
+  position: relative;
+  z-index: 1;
+}
+
+.docs-sidebar {
+  position: sticky;
+  top: 76px;
+  align-self: start;
+  padding: 1rem 0;
+}
+
+.docs-sidebar-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+  padding-left: 0.75rem;
+}
+
+.docs-sidebar-link {
+  display: block;
+  padding: 0.45rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+  border-left: 2px solid transparent;
+}
+
+.docs-sidebar-link:hover {
+  color: var(--text-primary);
+  background: var(--accent-glow);
+  border-left-color: var(--accent-deep);
+  text-decoration: none;
+}
+
+.docs-main {
+  min-width: 0;
+}
+
+.docs-details {
+  margin-bottom: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0.25rem 1.25rem 1.25rem;
+  background: var(--bg-surface);
+  transition: border-color 0.2s;
+}
+
+.docs-details:hover {
+  border-color: var(--border-bright);
+}
+
+.docs-details > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 0.75rem 0;
+  margin-bottom: 0.5rem;
+  border-bottom: none;
+  user-select: none;
+}
+
+.docs-details > summary::-webkit-details-marker { display: none; }
+.docs-details > summary::marker { display: none; content: ''; }
+
+.docs-chevron {
+  display: inline-block;
+  transition: transform 0.2s;
+  font-size: 0.8rem;
+}
+
+.docs-details[open] > summary .docs-chevron {
+  transform: rotate(90deg);
+}
+
 /* ---- Docs Endpoint Cards ---- */
 
 .endpoint-group {
@@ -939,6 +1026,28 @@ button:hover {
 }
 
 /* ---- Responsive ---- */
+
+@media (max-width: 768px) {
+  .docs-layout {
+    grid-template-columns: 1fr;
+    padding: 1.5rem 1rem;
+  }
+  .docs-sidebar {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1rem;
+  }
+  .docs-sidebar-title { display: none; }
+  .docs-sidebar-link {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.8rem;
+    border-left: none;
+  }
+}
 
 @media (max-width: 640px) {
   .nav { padding: 0 1rem; gap: 0; }
