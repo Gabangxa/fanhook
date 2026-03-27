@@ -6,6 +6,10 @@ const db = new Database(path.join(__dirname, 'fanhook.db'));
 // Enable WAL mode for better performance
 db.pragma('journal_mode = WAL');
 
+// ---------------------------------------------------------------------------
+// Schema migrations — safe to run on every startup
+// ---------------------------------------------------------------------------
+
 // Create tables
 db.exec(`
   CREATE TABLE IF NOT EXISTS sinks (
@@ -13,7 +17,6 @@ db.exec(`
     name TEXT NOT NULL,
     provider TEXT NOT NULL DEFAULT 'generic',
     api_key TEXT NOT NULL,
-    webhook_secret TEXT,
     created_at TEXT NOT NULL
   );
 
@@ -46,11 +49,14 @@ db.exec(`
   );
 `);
 
-// Migration: add webhook_secret column to existing databases
-try {
-  db.exec('ALTER TABLE sinks ADD COLUMN webhook_secret TEXT');
-} catch (_) {
-  // Column already exists — safe to ignore
+// Idempotent migrations — safe to run on every startup
+for (const col of [
+  'ALTER TABLE sinks ADD COLUMN webhook_secret TEXT',
+  "ALTER TABLE sinks ADD COLUMN tier TEXT NOT NULL DEFAULT 'free'",
+  'ALTER TABLE sinks ADD COLUMN stripe_customer_id TEXT',
+  'ALTER TABLE sinks ADD COLUMN stripe_subscription_id TEXT',
+]) {
+  try { db.exec(col); } catch (_) { /* column already exists */ }
 }
 
 // Seed demo data if not already present

@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { verifySignature } = require('../lib/verify');
 const { fanout } = require('../lib/fanout');
+const { getMonthlyEventCount, getEventLimit } = require('../lib/metering');
 
 const router = express.Router();
 
@@ -17,6 +18,24 @@ router.post('/:sinkId', (req, res) => {
   const sink = db.prepare('SELECT * FROM sinks WHERE id = ?').get(sinkId);
   if (!sink) {
     return res.status(404).json({ error: 'Sink not found' });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Usage enforcement — block Free-tier sinks that have hit their monthly cap
+  // ---------------------------------------------------------------------------
+  const tier = sink.tier || 'free';
+  const used = getMonthlyEventCount(db, sinkId);
+  const limit = getEventLimit(tier);
+
+  if (used >= limit) {
+    return res.status(429).json({
+      error: 'Monthly event limit reached',
+      tier,
+      events_used: used,
+      events_limit: limit,
+      upgrade_url: '/dashboard#upgrade',
+      message: `Your ${tier} plan allows ${limit.toLocaleString()} events/month. Upgrade at /dashboard to continue.`,
+    });
   }
 
   const rawBodyStr = req.body ? req.body.toString('utf8') : '';

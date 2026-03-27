@@ -1,0 +1,298 @@
+{
+  "spec_version": "1.0.0",
+  "current_stage": "mmp",
+  "locked_fields": [
+    "problem.statement",
+    "problem.evidence",
+    "user.primary.job_to_be_done",
+    "identity.idea_id"
+  ],
+  "identity": {
+    "idea_id": "f4a3e2d1-b0c9-4a8f-9e7d-6c5b4a3f2e1d",
+    "solution_name": "FanHook",
+    "slug": "fanhook-webhook-fanout",
+    "created_at": "2026-03-26T00:00:00Z",
+    "repo_url": "https://github.com/Gabangxa/fanhook",
+    "replit_url": ""
+  },
+  "problem": {
+    "statement": "Indie developers and small teams have no affordable webhook fanout API — existing tools (Svix, Hookdeck) start at $15–490/mo for features that are overkill at small scale.",
+    "evidence": [
+      {
+        "source": "Svix pricing page",
+        "url": "https://svix.com/pricing",
+        "summary": "Cheapest paid plan starts at $490/mo — entirely out of reach for indie/small team use"
+      },
+      {
+        "source": "Hookdeck pricing page",
+        "url": "https://hookdeck.com/pricing",
+        "summary": "$15–60/mo but no fanout to multiple endpoints on lower tiers"
+      },
+      {
+        "source": "Product research score",
+        "summary": "Scored 22/25 across market size, build feasibility, differentiation, revenue clarity, contextual fit"
+      }
+    ],
+    "severity": "important",
+    "frequency": "daily",
+    "existing_solutions": [
+      {
+        "name": "Svix",
+        "url": "https://svix.com",
+        "pricing": "$490/mo minimum",
+        "weakness": "Priced for enterprises — completely inaccessible to indie/solo developers"
+      },
+      {
+        "name": "Hookdeck",
+        "url": "https://hookdeck.com",
+        "pricing": "$15–60/mo",
+        "weakness": "Limited fanout on lower tiers, no multi-provider signature verification bundle"
+      },
+      {
+        "name": "Self-hosted (DIY)",
+        "pricing": "Free but developer time cost",
+        "weakness": "Requires building retries, logging, sig verification, and fanout from scratch"
+      }
+    ]
+  },
+  "user": {
+    "primary": {
+      "description": "Indie developer or small engineering team (1–5 people) building a SaaS product that receives webhooks from providers like Stripe and GitHub",
+      "job_to_be_done": "When I receive a webhook from a provider / I want to fan it out to multiple endpoints with signature verification and automatic retries / so I can build reliable integrations without managing the infrastructure myself",
+      "willingness_to_pay": "medium",
+      "willingness_to_pay_notes": "$9–29/mo based on competitor pricing gap — Svix starts at $490/mo, Hookdeck at $15/mo but with limited fanout. Target is the underserved $9–29/mo band.",
+      "acquisition_channel": "hacker_news"
+    }
+  },
+  "monetisation": {
+    "model": "freemium",
+    "price_points": [
+      {
+        "name": "Free",
+        "price_usd": 0,
+        "cadence": "monthly",
+        "features": [
+          "1 sink",
+          "1,000 events/mo",
+          "Stripe + GitHub sig verification",
+          "3 fanout routes",
+          "3 retry attempts"
+        ]
+      },
+      {
+        "name": "Starter",
+        "price_usd": 9,
+        "cadence": "monthly",
+        "features": [
+          "5 sinks",
+          "50,000 events/mo",
+          "All Free features",
+          "Event log (last 200)",
+          "Email alerts on retry exhaustion"
+        ]
+      }
+    ],
+    "payment_provider": "stripe",
+    "distribution": [
+      {
+        "channel": "hacker_news",
+        "asset_type": "post",
+        "notes": "Show HN post — lead with the Svix price comparison, demo the API in the post"
+      },
+      {
+        "channel": "reddit",
+        "asset_type": "post",
+        "notes": "r/webdev and r/SideProject — focus on the $9/mo vs $490/mo angle"
+      },
+      {
+        "channel": "github",
+        "asset_type": "readme_badge",
+        "notes": "Add 'Powered by FanHook' badge + link for projects using the API"
+      }
+    ],
+    "revenue_target": {}
+  },
+  "scope": {
+    "mvp": {
+      "in": [
+        {
+          "id": "sink-management",
+          "name": "Sink management",
+          "description": "POST /sinks to create a sink, GET /sinks to list, DELETE /sinks/:id to remove",
+          "rationale": "Core primitive — a sink is the entry point for all incoming webhooks"
+        },
+        {
+          "id": "ingest-verify",
+          "name": "Ingest + signature verification",
+          "description": "Receive webhooks at /ingest/:sinkId, verify Stripe and GitHub signatures against raw payload",
+          "rationale": "Directly serves JTBD — without sig verification the product is just a proxy, not a trusted relay"
+        },
+        {
+          "id": "fanout-retries",
+          "name": "Fanout with retries",
+          "description": "Fan out verified payload to up to 3 configured routes, 3 retry attempts with linear backoff",
+          "rationale": "The core value proposition — this is what makes it a fanout API, not just a passthrough"
+        },
+        {
+          "id": "event-log",
+          "name": "Event log",
+          "description": "GET /sinks/:id/events — last 50 events with status, timestamp, and route delivery results",
+          "rationale": "Enables debugging — developers need to see what was received and where it was sent"
+        },
+        {
+          "id": "api-key-auth",
+          "name": "API key auth",
+          "description": "Bearer API key authentication on all /api routes, key generated on sink creation",
+          "rationale": "Security baseline — no auth means any caller can read or delete sinks"
+        }
+      ],
+      "out": [
+        {
+          "name": "Payload transformation",
+          "reason": "Increases build complexity significantly — not required for core JTBD",
+          "deferred_to": "mmp"
+        },
+        {
+          "name": "Dead letter queue + redrive",
+          "reason": "Valuable but not blocking for v0.1 — retries cover the basic reliability need",
+          "deferred_to": "mmp"
+        },
+        {
+          "name": "Non-Stripe/GitHub provider verification",
+          "reason": "Additional providers need research into sig formats — scope risk for v0.1",
+          "deferred_to": "future"
+        },
+        {
+          "name": "Team seats and SSO",
+          "reason": "Enterprise feature — not relevant to indie developer persona",
+          "deferred_to": "future"
+        },
+        {
+          "name": "Custom domains",
+          "reason": "Infrastructure complexity out of scope for indie product at this stage",
+          "deferred_to": "future"
+        }
+      ],
+      "core_flow": [
+        "Developer creates a sink via POST /sinks → receives sink URL + API key",
+        "Developer configures Stripe/GitHub to send webhooks to the sink URL",
+        "Provider fires a webhook → FanHook receives it at /ingest/:sinkId",
+        "FanHook verifies the provider signature against the raw payload",
+        "FanHook fans out the verified payload to all configured routes",
+        "Failed routes are retried up to 3 times with linear backoff",
+        "Developer inspects delivery results via GET /sinks/:id/events"
+      ]
+    },
+    "mmp": {
+      "additions": [
+        "Stripe subscription checkout (Free → Starter upgrade flow)",
+        "Usage metering — track events/mo per sink against tier limits",
+        "Freemium enforcement — block ingest when Free tier limit (1k events/mo) is exceeded with a clear error response",
+        "Onboarding wizard — first-sink setup guide on /dashboard after signup",
+        "Landing page — hero, how it works, pricing table, CTA"
+      ],
+      "non_negotiables": [
+        "A user on the Free tier cannot exceed 1,000 events/mo — ingest must return 429 with upgrade prompt",
+        "Stripe checkout flow works end-to-end: click upgrade → checkout → webhook → tier updated",
+        "Landing page explains the product and pricing without requiring login",
+        "App still deploys and runs on Replit after all mmp additions",
+        "Payment webhook endpoint is secured and verifies Stripe signature"
+      ]
+    }
+  },
+  "tech": {
+    "stack": {
+      "frontend": "Plain HTML/CSS/JS (served by Express static middleware)",
+      "backend": "Node.js + Express",
+      "database": "SQLite (better-sqlite3)",
+      "auth": "Bearer API key (X-Api-Key header)",
+      "payments": "Stripe (subscriptions + webhooks)"
+    },
+    "replit_config": {
+      "run_command": "node server.js",
+      "language": "nodejs-20",
+      "entrypoint": "server.js"
+    },
+    "env_vars": [
+      {
+        "key": "STRIPE_SECRET_KEY",
+        "description": "Stripe secret key for creating customers and subscriptions",
+        "required": true
+      },
+      {
+        "key": "STRIPE_WEBHOOK_SECRET",
+        "description": "Stripe webhook signing secret for verifying subscription events",
+        "required": true
+      },
+      {
+        "key": "STRIPE_STARTER_PRICE_ID",
+        "description": "Stripe price ID for the Starter plan ($9/mo)",
+        "required": true
+      },
+      {
+        "key": "PORT",
+        "description": "Server port — set automatically by Replit",
+        "required": false
+      }
+    ],
+    "external_services": [
+      {
+        "name": "Stripe",
+        "purpose": "Subscription billing and payment webhooks",
+        "free_tier": "No monthly fee — 2.9% + 30c per transaction",
+        "setup_url": "https://dashboard.stripe.com"
+      }
+    ],
+    "decision_log": [
+      {
+        "timestamp": "2026-03-26T00:00:00Z",
+        "agent": "human",
+        "field_changed": "tech.stack",
+        "reason": "Stack backfilled from existing v0.1 codebase — Node.js + Express + SQLite already implemented and verified working"
+      }
+    ]
+  },
+  "gates": {
+    "research_complete": {
+      "status": "passed",
+      "evaluated_by": "human",
+      "evaluated_at": "2026-03-26T00:00:00Z",
+      "notes": "Backfilled from completed research run. Product scored 22/25. Problem, market, and persona validated."
+    },
+    "scope_approved": {
+      "status": "passed",
+      "evaluated_by": "human",
+      "evaluated_at": "2026-03-26T00:00:00Z",
+      "notes": "Backfilled from existing v0.1 implementation. Scope matches what was built. 5 features in, 5 out."
+    },
+    "mvp_functional": {
+      "status": "passed",
+      "evaluated_by": "human",
+      "evaluated_at": "2026-03-26T00:00:00Z",
+      "notes": "v0.1 codebase verified — core flow works end-to-end. Ingest, sig verification, fanout, retries, event log all present."
+    },
+    "ship_approved": {
+      "status": "passed",
+      "evaluated_by": "human",
+      "evaluated_at": "2026-03-27T12:27:31Z",
+      "notes": "Reviewed — mmp scope confirmed, Stripe integration and freemium enforcement look right"
+    },
+    "mmp_complete": {
+      "status": "passed",
+      "evaluated_by": "claude",
+      "evaluated_at": "2026-03-27T00:00:00Z",
+      "notes": "All MMP additions implemented: Stripe checkout flow, usage metering, 429 freemium enforcement, onboarding wizard, updated landing page. 429 path verified with automated test. Server boots cleanly on Replit-compatible stack."
+    }
+  },
+  "_runs": [
+    {
+      "agent": "human",
+      "started_at": "2026-03-26T00:00:00Z",
+      "completed_at": "2026-03-26T00:00:00Z",
+      "status": "completed",
+      "stage_before": "research",
+      "stage_after": "mmp",
+      "notes": "Spec backfilled manually from existing v0.1 codebase and prior research. Skipping research, mockup, and mvp stages — all work already done."
+    }
+  ]
+}

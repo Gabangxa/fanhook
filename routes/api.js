@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { getMonthlyEventCount, getEventLimit } = require('../lib/metering');
 
 const router = express.Router();
 
@@ -151,6 +152,57 @@ router.delete('/sinks/:sinkId/routes/:routeId', requireSinkAuth, (req, res) => {
 
   db.prepare('DELETE FROM routes WHERE id = ?').run(req.params.routeId);
   return res.status(204).send();
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/billing/status — tier + usage for the authenticated sink
+// ---------------------------------------------------------------------------
+router.get('/billing/status', requireAuth, (req, res) => {
+  const sink = req.sink;
+  const tier = sink.tier || 'free';
+  const used = getMonthlyEventCount(db, sink.id);
+  const limit = getEventLimit(tier);
+
+  return res.json({
+    sink_id: sink.id,
+    tier,
+    events_this_month: used,
+    events_limit: limit,
+    usage_pct: Math.min(100, Math.round((used / limit) * 100)),
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/billing/checkout — create a Stripe Checkout session (Free → Starter)
+// ---------------------------------------------------------------------------
+router.post('/billing/checkout', requireAuth, async (req, res) => {
+  const stripeKey = process.env.STRIPE_SECRET_KEY;
+  const priceId = process.env.STRIPE_STARTER_PRICE_ID;
+  const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+
+  if (!stripeKey || !priceId) {
+    return res.status(503).json({ error: 'Stripe not configured on this server' });
+  }
+
+  const stripe = require('stripe')(stripeKey);
+  const sink = req.sink;
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      line_items: [{ price: priceId, quantity: 1 }],
+      client_reference_id: sink.id,
+      // Reuse existing customer if we already have one
+      ...(sink.stripe_customer_id ? { customer: sink.stripe_customer_id } : {}),
+      success_url: `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${baseUrl}/dashboard`,
+    });
+
+    return res.json({ url: session.url });
+  } catch (err) {
+    console.error('[billing/checkout] Stripe error:', err.message);
+    return res.status(500).json({ error: 'Failed to create checkout session' });
+  }
 });
 
 module.exports = router;

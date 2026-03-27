@@ -6,6 +6,7 @@ const db = require('./db');
 
 const apiRouter = require('./routes/api');
 const ingestRouter = require('./routes/ingest');
+const stripeWebhookRouter = require('./routes/stripe-webhook');
 const webRouter = require('./routes/web');
 
 const app = express();
@@ -15,6 +16,12 @@ const PORT = process.env.PORT || 3000;
 // Static assets
 // ---------------------------------------------------------------------------
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ---------------------------------------------------------------------------
+// Stripe webhook — must use express.raw BEFORE global json middleware
+// so Stripe signature verification receives the raw bytes
+// ---------------------------------------------------------------------------
+app.use('/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhookRouter);
 
 // ---------------------------------------------------------------------------
 // Ingest route — must use express.raw BEFORE global json middleware
