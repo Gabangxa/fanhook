@@ -3,9 +3,6 @@ const path = require('path');
 
 const router = express.Router();
 
-// ---------------------------------------------------------------------------
-// Shared nav / head helpers
-// ---------------------------------------------------------------------------
 const NAV = `
 <nav class="nav">
   <a href="/" class="nav-brand">FanHook</a>
@@ -26,357 +23,418 @@ const HEAD = (title) => `<!DOCTYPE html>
 </head>
 <body>`;
 
-// ---------------------------------------------------------------------------
-// GET /health
-// ---------------------------------------------------------------------------
+const FOOTER = `<footer class="footer">FanHook — Built for indie developers &amp; small teams</footer>`;
+
 router.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ---------------------------------------------------------------------------
-// GET /openapi.json
-// ---------------------------------------------------------------------------
 router.get('/openapi.json', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'openapi.json'));
 });
 
-// ---------------------------------------------------------------------------
-// GET /docs
-// ---------------------------------------------------------------------------
 router.get('/docs', (req, res) => {
   const html = `${HEAD('FanHook API Docs')}
 ${NAV}
 <div class="container">
-  <h1 style="color:#6366f1;margin-top:2rem;">API Reference</h1>
-  <p>All management endpoints live under <code>/api</code> (Bearer auth required). Ingest endpoints live under <code>/ingest</code> (no auth — signature-verified instead).</p>
 
-  <h2 style="color:#94a3b8;border-bottom:1px solid #1e293b;padding-bottom:.5rem;">Sinks</h2>
-  <table>
-    <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
-    <tbody>
-      <tr><td><span class="method method-post">POST</span></td><td><code>/api/sinks</code></td><td>Bearer</td><td>Create a new sink. Body: <code>{"name":"...","provider":"stripe|github|generic"}</code></td></tr>
-      <tr><td><span class="method method-get">GET</span></td><td><code>/api/sinks</code></td><td>Bearer</td><td>List sinks for the authenticated API key.</td></tr>
-      <tr><td><span class="method method-get">GET</span></td><td><code>/api/sinks/:id/events</code></td><td>Bearer</td><td>Last 50 events with delivery attempts.</td></tr>
-    </tbody>
-  </table>
+  <div class="fade-in" style="margin-top:2.5rem;">
+    <div class="section-label">Reference</div>
+    <h1 class="section-title">API Documentation</h1>
+    <p style="color:var(--text-secondary);max-width:560px;margin-bottom:2.5rem;">
+      Management endpoints live under <code>/api</code> (Bearer auth). Ingest endpoints live under <code>/ingest</code> (signature-verified).
+    </p>
+  </div>
 
-  <h2 style="color:#94a3b8;border-bottom:1px solid #1e293b;padding-bottom:.5rem;">Routes</h2>
-  <table>
-    <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
-    <tbody>
-      <tr><td><span class="method method-post">POST</span></td><td><code>/api/sinks/:id/routes</code></td><td>Bearer</td><td>Add a destination URL. Body: <code>{"url":"https://..."}</code></td></tr>
-      <tr><td><span class="method method-delete">DELETE</span></td><td><code>/api/sinks/:id/routes/:routeId</code></td><td>Bearer</td><td>Remove a route. Returns 204.</td></tr>
-    </tbody>
-  </table>
+  <div class="endpoint-group fade-in fade-in-d1">
+    <div class="endpoint-group-title">
+      <span style="font-size:1.1rem;">&#9679;</span> Sinks
+    </div>
 
-  <h2 style="color:#94a3b8;border-bottom:1px solid #1e293b;padding-bottom:.5rem;">Billing</h2>
-  <table>
-    <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
-    <tbody>
-      <tr><td><span class="method method-get">GET</span></td><td><code>/api/billing/status</code></td><td>Bearer</td><td>Current tier, events used this month, and limit.</td></tr>
-      <tr><td><span class="method method-post">POST</span></td><td><code>/api/billing/checkout</code></td><td>Bearer</td><td>Create a Stripe Checkout session to upgrade to Starter ($9/mo). Returns <code>{"url":"..."}</code>.</td></tr>
-    </tbody>
-  </table>
+    <div class="endpoint-card">
+      <div><span class="method method-post">POST</span></div>
+      <div>
+        <div class="endpoint-path">/api/sinks <span class="endpoint-auth">Bearer</span></div>
+        <div class="endpoint-desc">Create a new sink. Body: <code>{"name":"...","provider":"stripe|github|generic"}</code></div>
+      </div>
+    </div>
 
-  <h2 style="color:#94a3b8;border-bottom:1px solid #1e293b;padding-bottom:.5rem;">Ingest</h2>
-  <table>
-    <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
-    <tbody>
-      <tr><td><span class="method method-post">POST</span></td><td><code>/ingest/:sinkId</code></td><td>Signature</td><td>Receive a webhook. FanHook verifies the provider signature and fans out to all routes. Returns <code>429</code> when monthly limit is reached.</td></tr>
-    </tbody>
-  </table>
+    <div class="endpoint-card">
+      <div><span class="method method-get">GET</span></div>
+      <div>
+        <div class="endpoint-path">/api/sinks <span class="endpoint-auth">Bearer</span></div>
+        <div class="endpoint-desc">List sinks for the authenticated API key.</div>
+      </div>
+    </div>
 
-  <h2 style="color:#94a3b8;border-bottom:1px solid #1e293b;padding-bottom:.5rem;">Response Codes</h2>
-  <table>
-    <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
-    <tbody>
-      <tr><td>200</td><td>OK</td></tr>
-      <tr><td>201</td><td>Created</td></tr>
-      <tr><td>204</td><td>No Content (deletion)</td></tr>
-      <tr><td>400</td><td>Bad Request — missing or invalid fields</td></tr>
-      <tr><td>401</td><td>Unauthorized — invalid API key or signature</td></tr>
-      <tr><td>403</td><td>Forbidden — sink does not belong to this API key</td></tr>
-      <tr><td>404</td><td>Not Found</td></tr>
-      <tr><td>429</td><td>Too Many Requests — monthly event limit reached</td></tr>
-    </tbody>
-  </table>
+    <div class="endpoint-card">
+      <div><span class="method method-get">GET</span></div>
+      <div>
+        <div class="endpoint-path">/api/sinks/:id/events <span class="endpoint-auth">Bearer</span></div>
+        <div class="endpoint-desc">Last 50 events with delivery attempts.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="endpoint-group fade-in fade-in-d2">
+    <div class="endpoint-group-title">
+      <span style="font-size:1.1rem;">&#9679;</span> Routes
+    </div>
+
+    <div class="endpoint-card">
+      <div><span class="method method-post">POST</span></div>
+      <div>
+        <div class="endpoint-path">/api/sinks/:id/routes <span class="endpoint-auth">Bearer</span></div>
+        <div class="endpoint-desc">Add a destination URL. Body: <code>{"url":"https://..."}</code></div>
+      </div>
+    </div>
+
+    <div class="endpoint-card">
+      <div><span class="method method-delete">DELETE</span></div>
+      <div>
+        <div class="endpoint-path">/api/sinks/:id/routes/:routeId <span class="endpoint-auth">Bearer</span></div>
+        <div class="endpoint-desc">Remove a route. Returns 204.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="endpoint-group fade-in fade-in-d3">
+    <div class="endpoint-group-title">
+      <span style="font-size:1.1rem;">&#9679;</span> Billing
+    </div>
+
+    <div class="endpoint-card">
+      <div><span class="method method-get">GET</span></div>
+      <div>
+        <div class="endpoint-path">/api/billing/status <span class="endpoint-auth">Bearer</span></div>
+        <div class="endpoint-desc">Current tier, events used this month, and limit.</div>
+      </div>
+    </div>
+
+    <div class="endpoint-card">
+      <div><span class="method method-post">POST</span></div>
+      <div>
+        <div class="endpoint-path">/api/billing/checkout <span class="endpoint-auth">Bearer</span></div>
+        <div class="endpoint-desc">Create a Stripe Checkout session to upgrade to Starter ($9/mo). Returns <code>{"url":"..."}</code>.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="endpoint-group fade-in fade-in-d4">
+    <div class="endpoint-group-title">
+      <span style="font-size:1.1rem;">&#9679;</span> Ingest
+    </div>
+
+    <div class="endpoint-card">
+      <div><span class="method method-post">POST</span></div>
+      <div>
+        <div class="endpoint-path">/ingest/:sinkId <span class="endpoint-auth">Signature</span></div>
+        <div class="endpoint-desc">Receive a webhook. FanHook verifies the provider signature and fans out to all routes. Returns <code>429</code> when monthly limit is reached.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fade-in fade-in-d4" style="margin-top:1rem;">
+    <div class="endpoint-group-title">
+      <span style="font-size:1.1rem;">&#9679;</span> Response Codes
+    </div>
+    <div class="response-codes">
+      <div class="response-code"><span class="code-num code-2xx">200</span> <span style="color:var(--text-secondary)">OK</span></div>
+      <div class="response-code"><span class="code-num code-2xx">201</span> <span style="color:var(--text-secondary)">Created</span></div>
+      <div class="response-code"><span class="code-num code-2xx">204</span> <span style="color:var(--text-secondary)">No Content</span></div>
+      <div class="response-code"><span class="code-num code-4xx">400</span> <span style="color:var(--text-secondary)">Bad Request</span></div>
+      <div class="response-code"><span class="code-num code-4xx">401</span> <span style="color:var(--text-secondary)">Unauthorized</span></div>
+      <div class="response-code"><span class="code-num code-4xx">403</span> <span style="color:var(--text-secondary)">Forbidden</span></div>
+      <div class="response-code"><span class="code-num code-4xx">404</span> <span style="color:var(--text-secondary)">Not Found</span></div>
+      <div class="response-code"><span class="code-num code-4xx">429</span> <span style="color:var(--text-secondary)">Rate Limited</span></div>
+    </div>
+  </div>
+
 </div>
-<footer style="text-align:center;padding:2rem;color:#475569;border-top:1px solid #1e293b;">FanHook — Built for developers</footer>
+${FOOTER}
 </body></html>`;
   res.setHeader('Content-Type', 'text/html');
   res.send(html);
 });
 
-// ---------------------------------------------------------------------------
-// GET / — Landing page
-// ---------------------------------------------------------------------------
 router.get('/', (req, res) => {
   const html = `${HEAD('FanHook — Affordable Webhook Fanout')}
 ${NAV}
 
 <div class="container">
 
-  <!-- Hero -->
-  <section class="hero" style="margin:4rem 0 3rem;">
-    <h1>Webhook fanout that doesn't cost $490/mo.</h1>
-    <p style="font-size:1.2rem;color:#94a3b8;max-width:600px;margin:1rem auto 2rem;">
+  <section class="hero fade-in">
+    <h1>Webhook fanout that<br>doesn't cost $490/mo.</h1>
+    <p>
       One webhook in. Many destinations out. Stripe &amp; GitHub signature verification,
       automatic retries, and a real-time event log — starting free.
     </p>
-    <div style="display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;">
-      <a href="/dashboard" class="btn">Open Dashboard</a>
+    <div class="hero-buttons">
+      <a href="/dashboard" class="btn btn-primary">Open Dashboard</a>
       <a href="/docs" class="btn btn-secondary">API Docs</a>
     </div>
   </section>
 
-  <!-- How it works -->
-  <section style="margin-bottom:3.5rem;">
-    <h2 style="color:#94a3b8;text-align:center;margin-bottom:2rem;">How it works</h2>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1.5rem;">
-      <div class="how-step">
-        <div class="step-num">1</div>
-        <h3>Create a sink</h3>
-        <p>POST to <code>/api/sinks</code> and get a unique ingest URL + API key in seconds.</p>
+  <section class="fade-in fade-in-d1" style="margin-bottom:4rem;">
+    <div style="text-align:center;margin-bottom:2.5rem;">
+      <div class="section-label">Workflow</div>
+      <div class="section-title">How it works</div>
+    </div>
+
+    <div class="timeline">
+      <div class="timeline-step">
+        <div class="timeline-dot">1</div>
+        <div class="timeline-content">
+          <h3>Create a sink</h3>
+          <p>POST to <code>/api/sinks</code> and get a unique ingest URL + API key in seconds.</p>
+        </div>
       </div>
-      <div class="how-step">
-        <div class="step-num">2</div>
-        <h3>Point your provider</h3>
-        <p>Set the ingest URL as your Stripe or GitHub webhook endpoint. No config changes needed.</p>
+      <div class="timeline-step">
+        <div class="timeline-dot">2</div>
+        <div class="timeline-content">
+          <h3>Point your provider</h3>
+          <p>Set the ingest URL as your Stripe or GitHub webhook endpoint. Zero config changes needed.</p>
+        </div>
       </div>
-      <div class="how-step">
-        <div class="step-num">3</div>
-        <h3>FanHook verifies &amp; fans out</h3>
-        <p>Every incoming webhook is signature-verified, then forwarded to all your configured routes.</p>
+      <div class="timeline-step">
+        <div class="timeline-dot">3</div>
+        <div class="timeline-content">
+          <h3>FanHook verifies &amp; fans out</h3>
+          <p>Every incoming webhook is signature-verified, then forwarded in parallel to all your configured routes.</p>
+        </div>
       </div>
-      <div class="how-step">
-        <div class="step-num">4</div>
-        <h3>Auto-retry on failure</h3>
-        <p>Failed deliveries are retried up to 3 times with linear backoff. Inspect results in the event log.</p>
+      <div class="timeline-step">
+        <div class="timeline-dot">4</div>
+        <div class="timeline-content">
+          <h3>Auto-retry on failure</h3>
+          <p>Failed deliveries are retried up to 3 times with linear backoff. Inspect results in the event log.</p>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- vs competitors callout -->
-  <section style="background:#1e293b;border-radius:8px;padding:1.5rem 2rem;margin-bottom:3.5rem;">
-    <h2 style="color:#6366f1;margin-top:0;">Why not just use Svix or Hookdeck?</h2>
+  <section class="compare-section fade-in fade-in-d2">
+    <div class="section-label" style="margin-bottom:0.75rem;">Comparison</div>
+    <h2 class="section-title" style="font-size:1.5rem;margin-bottom:1.25rem;">Why not Svix or Hookdeck?</h2>
     <table>
       <thead>
-        <tr><th>Service</th><th>Starting price</th><th>Fanout on lowest tier</th></tr>
+        <tr>
+          <th>Service</th>
+          <th>Starting price</th>
+          <th>Fanout included</th>
+        </tr>
       </thead>
       <tbody>
-        <tr><td>Svix</td><td style="color:#f87171;">$490/mo</td><td>Yes</td></tr>
-        <tr><td>Hookdeck</td><td style="color:#fbbf24;">$15/mo</td><td>Limited</td></tr>
-        <tr><td><strong style="color:#6366f1;">FanHook</strong></td><td style="color:#4ade80;"><strong>$0 → $9/mo</strong></td><td><strong>Yes</strong></td></tr>
+        <tr>
+          <td style="color:var(--text-secondary);">Svix</td>
+          <td style="color:var(--red);font-weight:600;">$490/mo</td>
+          <td style="color:var(--text-muted);">Yes</td>
+        </tr>
+        <tr>
+          <td style="color:var(--text-secondary);">Hookdeck</td>
+          <td style="color:var(--yellow);font-weight:600;">$15/mo</td>
+          <td style="color:var(--text-muted);">Limited</td>
+        </tr>
+        <tr class="compare-winner">
+          <td style="color:var(--accent-bright);">FanHook &#10024;</td>
+          <td style="color:var(--green);font-weight:700;">$0 → $9/mo</td>
+          <td style="color:var(--green);">&#10003; Yes</td>
+        </tr>
       </tbody>
     </table>
   </section>
 
-  <!-- Pricing -->
-  <section id="pricing" style="margin-bottom:3.5rem;">
-    <h2 style="color:#94a3b8;text-align:center;margin-bottom:2rem;">Pricing</h2>
+  <section id="pricing" class="fade-in fade-in-d3" style="margin-bottom:4rem;">
+    <div style="text-align:center;margin-bottom:2.5rem;">
+      <div class="section-label">Plans</div>
+      <div class="section-title">Simple, transparent pricing</div>
+    </div>
+
     <div class="pricing">
       <div class="plan">
         <h3>Free</h3>
-        <div class="price">$0<span style="font-size:1rem;font-weight:normal;">/mo</span></div>
-        <ul style="padding-left:1.2rem;color:#94a3b8;line-height:1.8;">
+        <div class="price">$0<span>/mo</span></div>
+        <ul>
           <li>1 sink</li>
           <li>1,000 events/month</li>
           <li>3 fanout routes per sink</li>
           <li>3 retry attempts</li>
-          <li>Stripe &amp; GitHub sig verification</li>
+          <li>Stripe &amp; GitHub verification</li>
           <li>Event log (last 50)</li>
         </ul>
-        <a href="/dashboard" class="btn" style="display:block;text-align:center;margin-top:1.5rem;">Get started free</a>
+        <a href="/dashboard" class="btn btn-secondary" style="display:block;text-align:center;margin-top:1.5rem;width:100%;">Get started free</a>
       </div>
       <div class="plan plan-featured">
-        <div style="font-size:.75rem;font-weight:700;letter-spacing:.05em;color:#6366f1;text-transform:uppercase;margin-bottom:.5rem;">Most popular</div>
+        <div class="plan-badge">Most popular</div>
         <h3>Starter</h3>
-        <div class="price">$9<span style="font-size:1rem;font-weight:normal;">/mo</span></div>
-        <ul style="padding-left:1.2rem;color:#94a3b8;line-height:1.8;">
+        <div class="price">$9<span>/mo</span></div>
+        <ul>
           <li>5 sinks</li>
           <li>50,000 events/month</li>
-          <li>All Free features</li>
+          <li>Everything in Free</li>
           <li>Event log (last 200)</li>
           <li>Email alerts on retry exhaustion</li>
         </ul>
-        <a href="/dashboard#upgrade" class="btn" style="display:block;text-align:center;margin-top:1.5rem;background:#6366f1;">Upgrade to Starter</a>
+        <a href="/dashboard#upgrade" class="btn btn-primary" style="display:block;text-align:center;margin-top:1.5rem;width:100%;">Upgrade to Starter</a>
       </div>
     </div>
   </section>
 
-  <!-- Quick start snippet -->
-  <section style="margin-bottom:3.5rem;">
-    <h2 style="color:#94a3b8;">30-second quick start</h2>
-    <pre style="font-size:.85rem;"># 1. Create a sink
-curl -X POST https://your-app.replit.app/api/sinks \\
-  -H "Authorization: Bearer &lt;your_api_key&gt;" \\
-  -H "Content-Type: application/json" \\
-  -d '{"name":"my-stripe-sink","provider":"stripe"}'
+  <section class="fade-in fade-in-d4" style="margin-bottom:4rem;">
+    <div class="section-label">Get started</div>
+    <div class="section-title" style="font-size:1.5rem;">30-second quick start</div>
+    <pre><span class="comment"># 1. Create a sink</span>
+<span class="cmd">curl</span> <span class="flag">-X POST</span> https://your-app.replit.app/api/sinks \\
+  <span class="flag">-H</span> <span class="string">"Authorization: Bearer &lt;your_api_key&gt;"</span> \\
+  <span class="flag">-H</span> <span class="string">"Content-Type: application/json"</span> \\
+  <span class="flag">-d</span> <span class="string">'{"name":"my-stripe-sink","provider":"stripe"}'</span>
 
-# 2. Add a destination route
-curl -X POST https://your-app.replit.app/api/sinks/&lt;sink_id&gt;/routes \\
-  -H "Authorization: Bearer &lt;your_api_key&gt;" \\
-  -H "Content-Type: application/json" \\
-  -d '{"url":"https://your-service.example.com/webhook"}'
+<span class="comment"># 2. Add a destination route</span>
+<span class="cmd">curl</span> <span class="flag">-X POST</span> https://your-app.replit.app/api/sinks/&lt;sink_id&gt;/routes \\
+  <span class="flag">-H</span> <span class="string">"Authorization: Bearer &lt;your_api_key&gt;"</span> \\
+  <span class="flag">-H</span> <span class="string">"Content-Type: application/json"</span> \\
+  <span class="flag">-d</span> <span class="string">'{"url":"https://your-service.example.com/webhook"}'</span>
 
-# 3. Point Stripe at your ingest URL
-#    https://your-app.replit.app/ingest/&lt;sink_id&gt;</pre>
+<span class="comment"># 3. Point Stripe at your ingest URL</span>
+<span class="comment">#    https://your-app.replit.app/ingest/&lt;sink_id&gt;</span></pre>
   </section>
 
 </div>
 
-<footer style="text-align:center;padding:2rem;color:#475569;border-top:1px solid #1e293b;">
-  FanHook — Built for indie developers &amp; small teams
-</footer>
-<style>
-  .btn { display:inline-block; padding:.6rem 1.4rem; background:#334155; color:#e2e8f0; border-radius:6px; text-decoration:none; font-weight:600; cursor:pointer; border:none; font-size:.95rem; }
-  .btn:hover { background:#475569; }
-  .btn-secondary { background:transparent; border:1px solid #475569; }
-  .btn-secondary:hover { background:#1e293b; }
-  .how-step { background:#1e293b; border-radius:8px; padding:1.25rem 1.5rem; }
-  .how-step h3 { color:#e2e8f0; margin:.5rem 0; }
-  .how-step p { color:#94a3b8; margin:0; font-size:.9rem; }
-  .step-num { font-size:1.5rem; font-weight:800; color:#6366f1; }
-  .plan-featured { border:2px solid #6366f1; }
-</style>
+${FOOTER}
 </body></html>`;
   res.setHeader('Content-Type', 'text/html');
   res.send(html);
 });
 
-// ---------------------------------------------------------------------------
-// GET /billing/success — post-checkout confirmation page
-// ---------------------------------------------------------------------------
 router.get('/billing/success', (req, res) => {
   const html = `${HEAD('FanHook — Upgrade Successful')}
 ${NAV}
-<div class="container" style="text-align:center;padding:5rem 1rem;">
-  <div style="font-size:3rem;margin-bottom:1rem;">🎉</div>
-  <h1 style="color:#4ade80;">You're on Starter!</h1>
-  <p style="color:#94a3b8;font-size:1.1rem;max-width:480px;margin:1rem auto 2rem;">
+<div class="container" style="text-align:center;padding:6rem 1rem;">
+  <div style="width:64px;height:64px;border-radius:50%;background:rgba(74,222,128,0.1);border:2px solid var(--green);display:flex;align-items:center;justify-content:center;margin:0 auto 1.5rem;font-size:1.5rem;">&#10003;</div>
+  <h1 style="font-size:2rem;font-weight:800;background:linear-gradient(135deg,var(--green),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:0.5rem;">You're on Starter!</h1>
+  <p style="color:var(--text-secondary);font-size:1.1rem;max-width:480px;margin:1rem auto 2rem;">
     Your plan has been upgraded. You now have 50,000 events/month and 5 sinks.
     It may take a few seconds for the dashboard to reflect the change.
   </p>
-  <a href="/dashboard" style="display:inline-block;padding:.7rem 1.8rem;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;">Go to Dashboard</a>
+  <a href="/dashboard" class="btn btn-primary">Go to Dashboard</a>
 </div>
+${FOOTER}
 </body></html>`;
   res.setHeader('Content-Type', 'text/html');
   res.send(html);
 });
 
-// ---------------------------------------------------------------------------
-// GET /dashboard
-// ---------------------------------------------------------------------------
 router.get('/dashboard', (req, res) => {
   const html = `${HEAD('FanHook Dashboard')}
 ${NAV}
 
 <div class="container">
-  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-top:2rem;">
-    <h1 style="color:#6366f1;margin:0;">Dashboard</h1>
-    <!-- Billing badge — populated by JS -->
-    <div id="billing-badge" style="display:none;padding:.4rem 1rem;border-radius:999px;font-size:.85rem;font-weight:600;"></div>
+  <div class="fade-in" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-top:2rem;margin-bottom:1.5rem;">
+    <div>
+      <div class="section-label">Control Panel</div>
+      <h1 class="section-title" style="margin-bottom:0;">Dashboard</h1>
+    </div>
+    <div id="billing-badge" style="display:none;padding:0.35rem 1rem;border-radius:999px;font-size:0.8rem;font-weight:700;letter-spacing:0.04em;"></div>
   </div>
 
-  <!-- ------------------------------------------------------------------ -->
-  <!-- Onboarding wizard (shown when sink has no routes yet)               -->
-  <!-- ------------------------------------------------------------------ -->
-  <div id="onboarding" style="display:none;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:1.5rem 2rem;margin:1.5rem 0;">
-    <h2 style="color:#6366f1;margin-top:0;">Getting started</h2>
-    <ol style="color:#94a3b8;line-height:2;margin:0;padding-left:1.2rem;">
-      <li><span id="step1" style="color:#4ade80;font-weight:600;">Sink created</span> — your ingest URL is ready below.</li>
-      <li id="step2-item">Add at least one <strong style="color:#e2e8f0;">route</strong> (a destination URL) in the Routes section.</li>
-      <li>Point Stripe or GitHub at your ingest URL: <code id="ingest-url-hint" style="font-size:.85rem;"></code></li>
+  <div id="onboarding" class="onboarding-card" style="display:none;">
+    <h2>&#128640; Getting started</h2>
+    <ol>
+      <li><span id="step1" style="color:var(--green);font-weight:600;">Sink created</span> — your ingest URL is ready below.</li>
+      <li id="step2-item">Add at least one <strong style="color:var(--text-primary);">route</strong> (a destination URL) in the Routes section.</li>
+      <li>Point Stripe or GitHub at your ingest URL: <code id="ingest-url-hint" style="font-size:.82rem;"></code></li>
       <li>Send a test webhook and check the event log below.</li>
     </ol>
   </div>
 
-  <!-- ------------------------------------------------------------------ -->
-  <!-- Usage bar + upgrade CTA                                             -->
-  <!-- ------------------------------------------------------------------ -->
-  <div id="usage-section" style="display:none;background:#1e293b;border-radius:8px;padding:1.25rem 1.5rem;margin:1.5rem 0;">
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:.75rem;">
-      <div>
-        <span style="color:#94a3b8;font-size:.9rem;">Events this month: </span>
-        <strong id="usage-text" style="color:#e2e8f0;"></strong>
+  <div id="usage-section" style="display:none;margin-bottom:1.5rem;">
+    <div class="glass-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:0.75rem;">
+        <div>
+          <span style="color:var(--text-muted);font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;">Events this month</span>
+          <div id="usage-text" style="color:var(--text-primary);font-size:1.1rem;font-weight:700;margin-top:0.15rem;"></div>
+        </div>
+        <div id="upgrade-cta" style="display:none;">
+          <a id="upgrade-btn" href="#upgrade" onclick="startCheckout(event)" class="btn btn-primary" style="font-size:0.85rem;padding:0.5rem 1.2rem;">
+            Upgrade to Starter — $9/mo
+          </a>
+        </div>
       </div>
-      <div id="upgrade-cta" style="display:none;">
-        <a id="upgrade-btn" href="#upgrade" onclick="startCheckout(event)"
-           style="padding:.5rem 1.2rem;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;font-size:.9rem;">
-          Upgrade to Starter — $9/mo
-        </a>
+      <div class="usage-bar-track">
+        <div id="usage-bar" class="usage-bar-fill" style="width:0%;"></div>
       </div>
+      <p id="usage-limit-msg" style="display:none;color:var(--red);margin:0.75rem 0 0;font-size:0.85rem;font-weight:500;">
+        Monthly limit reached. Upgrade to Starter to continue receiving events.
+      </p>
     </div>
-    <div style="background:#0f172a;border-radius:4px;height:8px;overflow:hidden;">
-      <div id="usage-bar" style="height:100%;background:#6366f1;transition:width .3s;width:0%;"></div>
-    </div>
-    <p id="usage-limit-msg" style="display:none;color:#f87171;margin:.75rem 0 0;font-size:.9rem;">
-      Monthly limit reached. Upgrade to Starter to continue receiving events.
-    </p>
   </div>
 
-  <!-- ------------------------------------------------------------------ -->
-  <!-- Sinks                                                               -->
-  <!-- ------------------------------------------------------------------ -->
-  <section style="margin-bottom:2.5rem;">
-    <h2 style="color:#94a3b8;">Sinks</h2>
-    <div id="sinks-loading" style="color:#475569;">Loading...</div>
-    <table id="sinks-table" style="display:none;">
-      <thead>
-        <tr><th>ID</th><th>Name</th><th>Provider</th><th>Tier</th><th>Ingest URL</th><th>Created</th></tr>
-      </thead>
-      <tbody id="sinks-body"></tbody>
-    </table>
+  <section class="fade-in fade-in-d1" style="margin-bottom:2rem;">
+    <div class="dash-section-header">
+      <div class="dash-section-icon" style="background:rgba(99,102,241,0.1);color:var(--accent);">&#9881;</div>
+      <h2>Sinks</h2>
+    </div>
+    <div id="sinks-loading" style="color:var(--text-muted);padding:1rem;">Loading...</div>
+    <div class="table-wrap" id="sinks-table" style="display:none;">
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Name</th><th>Provider</th><th>Tier</th><th>Ingest URL</th><th>Created</th></tr>
+        </thead>
+        <tbody id="sinks-body"></tbody>
+      </table>
+    </div>
   </section>
 
-  <!-- ------------------------------------------------------------------ -->
-  <!-- Routes                                                              -->
-  <!-- ------------------------------------------------------------------ -->
-  <section style="margin-bottom:2.5rem;">
-    <h2 style="color:#94a3b8;">Routes for demo_sink_1</h2>
-    <div id="routes-loading" style="color:#475569;">Loading...</div>
-    <table id="routes-table" style="display:none;">
-      <thead>
-        <tr><th>ID</th><th>URL</th><th>Created</th><th>Action</th></tr>
-      </thead>
-      <tbody id="routes-body"></tbody>
-    </table>
+  <section class="fade-in fade-in-d2" style="margin-bottom:2rem;">
+    <div class="dash-section-header">
+      <div class="dash-section-icon" style="background:rgba(34,211,238,0.1);color:var(--cyan);">&#8594;</div>
+      <h2>Routes <span style="font-weight:400;color:var(--text-muted);font-size:0.85rem;">for demo_sink_1</span></h2>
+    </div>
+    <div id="routes-loading" style="color:var(--text-muted);padding:1rem;">Loading...</div>
+    <div class="table-wrap" id="routes-table" style="display:none;">
+      <table>
+        <thead>
+          <tr><th>ID</th><th>URL</th><th>Created</th><th>Action</th></tr>
+        </thead>
+        <tbody id="routes-body"></tbody>
+      </table>
+    </div>
 
     <div style="display:flex;gap:1rem;align-items:flex-end;margin-top:1rem;flex-wrap:wrap;">
-      <div>
-        <label style="display:block;margin-bottom:.25rem;color:#94a3b8;">New route URL</label>
-        <input type="url" id="new-route-url" placeholder="https://example.com/webhook" style="min-width:280px;" />
+      <div style="flex:1;min-width:280px;">
+        <label style="display:block;margin-bottom:0.3rem;color:var(--text-muted);font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">New route URL</label>
+        <input type="url" id="new-route-url" placeholder="https://example.com/webhook" style="width:100%;" />
       </div>
       <button onclick="addRoute()">Add Route</button>
     </div>
-    <p id="route-msg" style="display:none;"></p>
+    <p id="route-msg" style="display:none;font-size:0.9rem;margin-top:0.5rem;"></p>
   </section>
 
-  <!-- ------------------------------------------------------------------ -->
-  <!-- Event log                                                           -->
-  <!-- ------------------------------------------------------------------ -->
-  <section style="margin-bottom:3rem;">
-    <h2 style="color:#94a3b8;">Recent Events — demo_sink_1</h2>
-    <div id="events-loading" style="color:#475569;">Loading...</div>
-    <table id="events-table" style="display:none;">
-      <thead>
-        <tr><th>Event ID</th><th>Status</th><th>Received At</th><th>Attempts</th></tr>
-      </thead>
-      <tbody id="events-body"></tbody>
-    </table>
+  <section class="fade-in fade-in-d3" style="margin-bottom:3rem;">
+    <div class="dash-section-header">
+      <div class="dash-section-icon" style="background:rgba(74,222,128,0.1);color:var(--green);">&#9889;</div>
+      <h2>Recent Events <span style="font-weight:400;color:var(--text-muted);font-size:0.85rem;">demo_sink_1</span></h2>
+    </div>
+    <div id="events-loading" style="color:var(--text-muted);padding:1rem;">Loading...</div>
+    <div class="table-wrap" id="events-table" style="display:none;">
+      <table>
+        <thead>
+          <tr><th>Event ID</th><th>Status</th><th>Received At</th><th>Attempts</th></tr>
+        </thead>
+        <tbody id="events-body"></tbody>
+      </table>
+    </div>
   </section>
 </div>
 
-<footer style="text-align:center;padding:2rem;color:#475569;border-top:1px solid #1e293b;">
-  FanHook — Built for developers
-</footer>
+${FOOTER}
 
 <script>
   const API_KEY = 'demo_key_abc123';
   const SINK_ID = 'demo_sink_1';
   const headers = { 'Authorization': 'Bearer ' + API_KEY, 'Content-Type': 'application/json' };
 
-  // XSS-safe HTML escaping for user-supplied strings inserted via innerHTML
   function esc(str) {
     return String(str)
       .replace(/&/g, '&amp;')
@@ -391,17 +449,16 @@ ${NAV}
     const cls = status === 'delivered' ? 'badge-delivered'
               : status === 'failed' ? 'badge-failed'
               : 'badge-pending';
-    return '<span class="' + cls + '">' + status + '</span>';
+    return '<span class="' + cls + '">' + esc(status) + '</span>';
   }
 
   function tierBadge(tier) {
-    const color = tier === 'starter' ? '#4ade80' : '#94a3b8';
-    return '<span style="color:' + color + ';font-weight:600;text-transform:uppercase;font-size:.75rem;">' + tier + '</span>';
+    const isStarter = tier === 'starter';
+    return '<span style="display:inline-flex;align-items:center;gap:0.3rem;padding:0.15rem 0.6rem;border-radius:999px;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;' +
+      (isStarter ? 'background:rgba(74,222,128,0.1);color:#4ade80;border:1px solid rgba(74,222,128,0.2);' : 'background:rgba(100,116,139,0.1);color:#94a3b8;border:1px solid rgba(100,116,139,0.15);') +
+      '">' + esc(tier) + '</span>';
   }
 
-  // -----------------------------------------------------------------------
-  // Billing / usage
-  // -----------------------------------------------------------------------
   async function loadBilling() {
     try {
       const res = await fetch('/api/billing/status', { headers });
@@ -410,25 +467,23 @@ ${NAV}
 
       const badge = document.getElementById('billing-badge');
       badge.textContent = data.tier.toUpperCase();
-      badge.style.background = data.tier === 'starter' ? '#14532d' : '#1e293b';
+      badge.style.background = data.tier === 'starter' ? 'rgba(74,222,128,0.1)' : 'rgba(100,116,139,0.1)';
       badge.style.color = data.tier === 'starter' ? '#4ade80' : '#94a3b8';
-      badge.style.border = '1px solid ' + (data.tier === 'starter' ? '#16a34a' : '#334155');
+      badge.style.border = '1px solid ' + (data.tier === 'starter' ? 'rgba(74,222,128,0.2)' : 'rgba(100,116,139,0.15)');
       badge.style.display = 'inline-block';
 
-      const usageSection = document.getElementById('usage-section');
-      usageSection.style.display = 'block';
-
+      document.getElementById('usage-section').style.display = 'block';
       document.getElementById('usage-text').textContent =
         data.events_this_month.toLocaleString() + ' / ' + data.events_limit.toLocaleString();
 
       const bar = document.getElementById('usage-bar');
       bar.style.width = data.usage_pct + '%';
-      bar.style.background = data.usage_pct >= 90 ? '#ef4444' : '#6366f1';
-
+      if (data.usage_pct >= 90) {
+        bar.style.background = 'linear-gradient(90deg, #ef4444, #f87171)';
+      }
       if (data.usage_pct >= 100) {
         document.getElementById('usage-limit-msg').style.display = 'block';
       }
-
       if (data.tier === 'free') {
         document.getElementById('upgrade-cta').style.display = 'block';
       }
@@ -438,7 +493,7 @@ ${NAV}
   async function startCheckout(e) {
     e.preventDefault();
     const btn = document.getElementById('upgrade-btn');
-    btn.textContent = 'Redirecting…';
+    btn.textContent = 'Redirecting\\u2026';
     btn.style.opacity = '.6';
     try {
       const res = await fetch('/api/billing/checkout', { method: 'POST', headers });
@@ -446,18 +501,15 @@ ${NAV}
       if (data.url) {
         window.location.href = data.url;
       } else {
-        btn.textContent = data.error || 'Error — try again';
+        btn.textContent = data.error || 'Error \\u2014 try again';
         btn.style.opacity = '1';
       }
     } catch (err) {
-      btn.textContent = 'Error — try again';
+      btn.textContent = 'Error \\u2014 try again';
       btn.style.opacity = '1';
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Sinks
-  // -----------------------------------------------------------------------
   async function loadSinks() {
     try {
       const res = await fetch('/api/sinks', { headers });
@@ -466,31 +518,26 @@ ${NAV}
       tbody.innerHTML = sinks.map(s =>
         '<tr>' +
         '<td><code style="font-size:.8rem;">' + esc(s.id) + '</code></td>' +
-        '<td>' + esc(s.name) + '</td>' +
+        '<td style="color:var(--text-primary);font-weight:500;">' + esc(s.name) + '</td>' +
         '<td>' + esc(s.provider) + '</td>' +
         '<td>' + tierBadge(s.tier || 'free') + '</td>' +
         '<td><code style="font-size:.8rem;">/ingest/' + esc(s.id) + '</code></td>' +
-        '<td style="font-size:.8rem;">' + esc(s.created_at) + '</td>' +
+        '<td style="font-size:.8rem;color:var(--text-muted);">' + esc(s.created_at) + '</td>' +
         '</tr>'
       ).join('');
       document.getElementById('sinks-loading').style.display = 'none';
-      document.getElementById('sinks-table').style.display = 'table';
+      document.getElementById('sinks-table').style.display = 'block';
     } catch (e) {
       document.getElementById('sinks-loading').textContent = 'Failed to load sinks.';
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Routes
-  // -----------------------------------------------------------------------
   async function loadRoutes() {
     document.getElementById('routes-loading').style.display = 'none';
-    document.getElementById('routes-table').style.display = 'table';
+    document.getElementById('routes-table').style.display = 'block';
     document.getElementById('routes-body').innerHTML =
-      '<tr><td colspan="4" style="color:#475569;">Use the form below to add routes. ' +
-      'Route IDs are returned on creation — keep them to delete later.</td></tr>';
-
-    // Hint for onboarding
+      '<tr><td colspan="4" style="color:var(--text-muted);">Use the form below to add routes. ' +
+      'Route IDs are returned on creation.</td></tr>';
     document.getElementById('ingest-url-hint').textContent =
       window.location.origin + '/ingest/' + SINK_ID;
   }
@@ -500,7 +547,7 @@ ${NAV}
     const msgEl = document.getElementById('route-msg');
     if (!url) {
       msgEl.textContent = 'URL is required';
-      msgEl.style.color = '#f87171';
+      msgEl.style.color = 'var(--red)';
       msgEl.style.display = 'block';
       return;
     }
@@ -511,11 +558,10 @@ ${NAV}
       const data = await res.json();
       if (res.ok) {
         msgEl.textContent = 'Route added! ID: ' + data.id;
-        msgEl.style.color = '#4ade80';
+        msgEl.style.color = 'var(--green)';
         msgEl.style.display = 'block';
         document.getElementById('new-route-url').value = '';
         currentRouteCount++;
-        // Hide onboarding step 2 if we now have a route
         if (currentRouteCount >= 1) {
           const s2 = document.getElementById('step2-item');
           if (s2) s2.style.opacity = '.5';
@@ -524,21 +570,20 @@ ${NAV}
         tr.id = 'route-' + esc(data.id);
         tr.innerHTML =
           '<td><code style="font-size:.8rem;">' + esc(data.id) + '</code></td>' +
-          '<td>' + esc(data.url) + '</td>' +
-          '<td style="font-size:.8rem;">' + esc(data.created_at) + '</td>' +
+          '<td style="color:var(--text-primary);">' + esc(data.url) + '</td>' +
+          '<td style="font-size:.8rem;color:var(--text-muted);">' + esc(data.created_at) + '</td>' +
           '<td><button onclick="deleteRoute(\\'' + esc(data.id) + '\\')">Delete</button></td>';
-        // Remove placeholder row if present
         const placeholder = document.querySelector('#routes-body tr td[colspan]');
         if (placeholder) placeholder.closest('tr').remove();
         document.getElementById('routes-body').appendChild(tr);
       } else {
         msgEl.textContent = 'Error: ' + (data.error || 'Unknown');
-        msgEl.style.color = '#f87171';
+        msgEl.style.color = 'var(--red)';
         msgEl.style.display = 'block';
       }
     } catch (e) {
       msgEl.textContent = 'Error: ' + e.message;
-      msgEl.style.color = '#f87171';
+      msgEl.style.color = 'var(--red)';
       msgEl.style.display = 'block';
     }
   }
@@ -558,9 +603,6 @@ ${NAV}
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Events
-  // -----------------------------------------------------------------------
   async function loadEvents() {
     try {
       const res = await fetch('/api/sinks/' + SINK_ID + '/events', { headers });
@@ -569,16 +611,14 @@ ${NAV}
       tbody.innerHTML = events.map(e =>
         '<tr>' +
         '<td><code style="font-size:.8rem;">' + esc(e.id) + '</code></td>' +
-        '<td>' + statusBadge(esc(e.status)) + '</td>' +
-        '<td style="font-size:.8rem;">' + esc(e.received_at) + '</td>' +
-        '<td>' + (e.delivery_attempts ? e.delivery_attempts.length : 0) + '</td>' +
+        '<td>' + statusBadge(e.status) + '</td>' +
+        '<td style="font-size:.8rem;color:var(--text-muted);">' + esc(e.received_at) + '</td>' +
+        '<td style="color:var(--text-primary);font-weight:600;">' + (e.delivery_attempts ? e.delivery_attempts.length : 0) + '</td>' +
         '</tr>'
       ).join('');
       document.getElementById('events-loading').style.display = 'none';
-      document.getElementById('events-table').style.display = 'table';
+      document.getElementById('events-table').style.display = 'block';
 
-      // Show onboarding wizard if sink has 0 routes (heuristic: no route IDs in events)
-      // We always show it for a first-time feel until routes are added
       if (currentRouteCount === 0) {
         document.getElementById('onboarding').style.display = 'block';
       }
@@ -587,9 +627,6 @@ ${NAV}
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Init
-  // -----------------------------------------------------------------------
   loadBilling();
   loadSinks();
   loadRoutes();

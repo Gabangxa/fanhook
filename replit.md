@@ -16,7 +16,7 @@ Plain Node.js/Express 4 app with server-rendered HTML frontend and SQLite via `b
 - `lib/fanout.js` — Parallel delivery to all routes with exponential retry logic
 - `lib/verify.js` — HMAC signature verification for Stripe and GitHub
 - `lib/metering.js` — Monthly event counting and tier limits
-- `public/style.css` — Dark indigo theme
+- `public/style.css` — Creative dark theme with glassmorphism, gradient accents, animations, Inter/JetBrains Mono fonts
 
 ### Data Model
 - **Sinks** — a webhook receiver (has an API key, provider type, optional HMAC secret)
