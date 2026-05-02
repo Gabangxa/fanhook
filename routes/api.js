@@ -309,7 +309,8 @@ router.post('/sinks/:sinkId/dlq/:eventId/redrive', requireSinkAuth, async (req, 
 // Auth: ?key=<api_key> query param (EventSource cannot set custom headers).
 // Subscribes to events.status.<sinkId> on NATS core and forwards each message
 // as a `data:` SSE frame. Sends `: ping` keepalives every 25 seconds.
-// If NATS is unavailable, returns 503 so the client falls back to polling.
+// If NATS is unavailable the stream stays open and retries on a backoff
+// schedule — once NATS comes back, live updates flow without a page refresh.
 // Cleans up the NATS subscription and interval on HTTP close.
 // ---------------------------------------------------------------------------
 router.get('/sinks/:sinkId/stream', async (req, res) => {
@@ -329,48 +330,77 @@ router.get('/sinks/:sinkId/stream', async (req, res) => {
     return res.status(403).json({ error: 'Forbidden: sink does not belong to this API key' });
   }
 
-  // Connect to NATS BEFORE flushing headers — once flushHeaders() is called
-  // the status code is locked. If NATS is down we can still send a clean 503.
-  let sub;
-  try {
-    const nc = await natsLib.getConnection();
-    sub = nc.subscribe(`events.status.${sinkId}`);
-  } catch (_) {
-    // NATS unavailable — 503 so EventSource.onerror fires → client falls back to polling
-    return res.status(503).json({ error: 'NATS unavailable' });
-  }
-
-  // Commit SSE headers and start the stream
+  // Commit SSE headers immediately — the stream stays open even while NATS is
+  // unavailable. Keepalive pings prevent proxy idle-timeouts during the wait.
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('X-Accel-Buffering', 'no');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  // Forward each NATS message as an SSE data frame
-  (async () => {
-    try {
-      for await (const msg of sub) {
-        const data = natsLib.jc.decode(msg.data);
-        res.write(`data: ${JSON.stringify(data)}\n\n`);
-      }
-    } catch (_) {
-      // Subscription closed — normal on client disconnect
-    }
-  })();
+  let closed = false;
+  let sub = null;
+  let retryTimer = null;
 
   // Keepalive ping every 25 seconds to survive proxy idle timeouts
   const pingInterval = setInterval(() => {
-    res.write(': ping\n\n');
+    if (!closed) res.write(': ping\n\n');
   }, 25_000);
 
   // Cleanup when the browser disconnects
   res.on('close', () => {
+    closed = true;
     clearInterval(pingInterval);
+    clearTimeout(retryTimer);
     if (sub) {
       try { sub.unsubscribe(); } catch (_) {}
     }
   });
+
+  // Exponential backoff delays (ms): 0, 1 s, 2 s, 4 s, 8 s, 16 s, 30 s, 30 s, …
+  const BACKOFF_MS = [0, 1000, 2000, 4000, 8000, 16000, 30000];
+  let attempt = 0;
+
+  async function tryConnect() {
+    if (closed) return;
+
+    try {
+      const nc = await natsLib.getConnection();
+      sub = nc.subscribe(`events.status.${sinkId}`);
+      attempt = 0; // reset backoff counter on successful connect
+
+      // Forward each NATS message as an SSE data frame
+      try {
+        for await (const msg of sub) {
+          if (closed) break;
+          const data = natsLib.jc.decode(msg.data);
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        }
+      } catch (_) {
+        // Subscription iterator closed (NATS disconnected or unsubscribed)
+      }
+
+      // If we reach here and the client is still connected, NATS went away —
+      // reset and schedule a reconnect attempt.
+      if (!closed) {
+        sub = null;
+        scheduleRetry();
+      }
+    } catch (_) {
+      // getConnection() failed — NATS is unavailable; retry with backoff
+      if (!closed) {
+        scheduleRetry();
+      }
+    }
+  }
+
+  function scheduleRetry() {
+    const delay = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
+    attempt++;
+    retryTimer = setTimeout(tryConnect, delay);
+  }
+
+  scheduleRetry();
 });
 
 // ---------------------------------------------------------------------------

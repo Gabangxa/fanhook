@@ -679,8 +679,10 @@ ${FOOTER}
   // Opens an EventSource to /api/sinks/:id/stream (auth via ?key= since
   // EventSource cannot set custom headers). On each incoming message the event
   // log is updated in place (status badge swap) or prepended (new pending row).
-  // On connection error the client degrades to a 10-second polling interval and
-  // cancels the fallback once SSE reconnects.
+  // The server keeps the SSE connection open and retries NATS on a backoff
+  // schedule, so the stream self-heals without a page refresh.
+  // On a hard connection error the client degrades to 10-second polling; the
+  // fallback is cancelled automatically on the first live data message.
 
   let ssePollingInterval = null;
 
@@ -689,14 +691,12 @@ ${FOOTER}
       '/api/sinks/' + SINK_ID + '/stream?key=' + API_KEY
     );
 
-    es.onopen = function () {
+    es.onmessage = function (event) {
+      // Cancel any polling fallback the moment live data arrives
       if (ssePollingInterval) {
         clearInterval(ssePollingInterval);
         ssePollingInterval = null;
       }
-    };
-
-    es.onmessage = function (event) {
       try { handleStatusUpdate(JSON.parse(event.data)); } catch (_) {}
     };
 
