@@ -48,6 +48,24 @@ db.exec(`
     FOREIGN KEY (event_id) REFERENCES events(id)
   );
 
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+
   CREATE TABLE IF NOT EXISTS dlq_entries (
     event_id TEXT PRIMARY KEY,
     sink_id TEXT NOT NULL,
@@ -72,6 +90,7 @@ for (const col of [
   'ALTER TABLE sinks ADD COLUMN stripe_subscription_id TEXT',
   'ALTER TABLE dlq_entries ADD COLUMN failure_reason TEXT',
   'ALTER TABLE dlq_entries ADD COLUMN nats_seq INTEGER',
+  'ALTER TABLE sinks ADD COLUMN user_id TEXT',
 ]) {
   try { db.exec(col); } catch (_) { /* column already exists */ }
 }

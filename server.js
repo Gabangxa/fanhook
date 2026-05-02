@@ -10,6 +10,8 @@ const apiRouter = require('./routes/api');
 const ingestRouter = require('./routes/ingest');
 const stripeWebhookRouter = require('./routes/stripe-webhook');
 const webRouter = require('./routes/web');
+const authRouter = require('./routes/auth');
+const { pruneExpiredSessions } = require('./lib/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -36,10 +38,17 @@ app.use('/ingest', express.raw({ type: '*/*' }), ingestRouter);
 // ---------------------------------------------------------------------------
 app.use(express.json());
 
+// HTML form posts (sign-in / sign-up / sign-out)
+app.use(express.urlencoded({ extended: false }));
+
+// Prune expired sessions on startup; cheap on small tables
+pruneExpiredSessions();
+
 // ---------------------------------------------------------------------------
 // Route mounts
 // ---------------------------------------------------------------------------
 app.use('/api', apiRouter);
+app.use('/', authRouter);
 app.use('/', webRouter);
 
 // ---------------------------------------------------------------------------

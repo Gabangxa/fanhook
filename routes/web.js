@@ -1,7 +1,15 @@
 const express = require('express');
 const path = require('path');
+const db = require('../db');
+const auth = require('../lib/auth');
 
 const router = express.Router();
+
+function escAttr(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
 
 // ---------- Inline SVG icons (lucide-style) ----------
 const ICON = {
@@ -81,13 +89,25 @@ router.get('/openapi.json', (req, res) => {
 
 // ---------- Landing page ----------
 router.get('/', (req, res) => {
+  const user = auth.getSessionUser(req);
+  const csrfToken = user ? auth.ensureCsrfToken(req, res) : null;
+  const navAuth = user
+    ? `<span class="topnav-link" title="${escAttr(user.email)}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escAttr(user.email)}</span>
+       <a href="/dashboard" class="pill btn-primary">Open Dashboard</a>
+       <form method="POST" action="/logout" style="display:inline;margin:0;">
+         <input type="hidden" name="_csrf" value="${escAttr(csrfToken)}" />
+         <button type="submit" class="pill btn-ghost" style="cursor:pointer;border:0;">Sign Out</button>
+       </form>`
+    : `<a href="/login" class="topnav-link">Sign In</a>
+       <a href="/signup" class="pill btn-primary">Get Started Free</a>`;
+
   const html = `${HEAD('FanHook — Webhook fanout made delightful.')}
 <nav class="topnav">
   ${FH_LOGO}
   <div class="topnav-actions">
     ${THEME_TOGGLE}
     <a href="/docs" class="topnav-link">Documentation</a>
-    <a href="/dashboard" class="pill btn-ghost">Sign In</a>
+    ${navAuth}
   </div>
 </nav>
 
@@ -333,7 +353,31 @@ ${THEME_SCRIPT}
 });
 
 // ---------- Dashboard ----------
-router.get('/dashboard', (req, res) => {
+router.get('/dashboard', auth.requireUser, (req, res) => {
+  // Look up the user's primary sink (auto-created at signup). Defensive
+  // fallback in case it was deleted: create a fresh one on the fly.
+  let sink = db.prepare(
+    'SELECT * FROM sinks WHERE user_id = ? ORDER BY created_at ASC LIMIT 1'
+  ).get(req.user.id);
+
+  if (!sink) {
+    const { v4: uuidv4 } = require('uuid');
+    const sinkId = uuidv4();
+    const apiKey = uuidv4();
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO sinks (id, name, provider, api_key, created_at, user_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(sinkId, 'My first sink', 'generic', apiKey, now, req.user.id);
+    sink = db.prepare('SELECT * FROM sinks WHERE id = ?').get(sinkId);
+  }
+
+  const userInitial = (req.user.email || '?').charAt(0).toUpperCase();
+  const userEmailJs = auth.safeJsonForScript(req.user.email);
+  const apiKeyJs = auth.safeJsonForScript(sink.api_key);
+  const sinkIdJs = auth.safeJsonForScript(sink.id);
+  const csrfToken = auth.ensureCsrfToken(req, res);
+
   const html = `${HEAD('FanHook — Dashboard')}
 <div class="app-shell">
   <div id="sidebar-overlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
@@ -363,7 +407,21 @@ router.get('/dashboard', (req, res) => {
         <span id="billing-badge" class="tier-pill" style="display:none;"></span>
         ${THEME_TOGGLE}
         <button class="bell-btn" aria-label="Notifications">${ICON.bell}<span class="bell-dot"></span></button>
-        <div class="avatar"><div>${ICON.user}</div></div>
+        <div class="user-menu" style="position:relative;">
+          <button id="user-menu-btn" class="avatar" aria-label="Account menu" onclick="toggleUserMenu(event)" style="cursor:pointer;border:none;padding:0;">
+            <div style="font-family:var(--font-heading);font-weight:700;font-size:0.95rem;color:var(--text-primary);">${escAttr(userInitial)}</div>
+          </button>
+          <div id="user-menu-pop" style="display:none;position:absolute;top:calc(100% + 8px);right:0;min-width:220px;background:var(--bg, #fff);border:1px solid var(--border, rgba(0,0,0,0.08));border-radius:14px;box-shadow:var(--shadow-md, 0 10px 30px rgba(0,0,0,0.12));padding:0.5rem;z-index:50;">
+            <div style="padding:0.65rem 0.75rem 0.5rem;border-bottom:1px solid var(--border, rgba(0,0,0,0.08));margin-bottom:0.35rem;">
+              <div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;color:var(--text-muted);">Signed in as</div>
+              <div style="font-family:var(--font-heading);font-weight:600;color:var(--text-primary);font-size:0.9rem;word-break:break-all;margin-top:0.2rem;">${escAttr(req.user.email)}</div>
+            </div>
+            <form method="POST" action="/logout" style="margin:0;">
+              <input type="hidden" name="_csrf" value="${escAttr(csrfToken)}" />
+              <button type="submit" style="display:block;width:100%;text-align:left;padding:0.55rem 0.75rem;border-radius:10px;font-size:0.9rem;font-weight:600;color:var(--text-primary);background:transparent;border:0;cursor:pointer;font-family:inherit;">Sign out</button>
+            </form>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -549,9 +607,24 @@ ${THEME_SCRIPT}
     setTimeout(function(){ setView('logs'); }, 100);
   }
 
-  const API_KEY = 'demo_key_abc123';
-  const SINK_ID = 'demo_sink_1';
+  const API_KEY = ${apiKeyJs};
+  const SINK_ID = ${sinkIdJs};
+  const USER_EMAIL = ${userEmailJs};
   const headers = { 'Authorization': 'Bearer ' + API_KEY, 'Content-Type': 'application/json' };
+
+  function toggleUserMenu(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
+    var pop = document.getElementById('user-menu-pop');
+    if (!pop) return;
+    pop.style.display = pop.style.display === 'block' ? 'none' : 'block';
+  }
+  document.addEventListener('click', function(e){
+    var pop = document.getElementById('user-menu-pop');
+    var btn = document.getElementById('user-menu-btn');
+    if (!pop || !btn) return;
+    if (pop.contains(e.target) || btn.contains(e.target)) return;
+    pop.style.display = 'none';
+  });
 
   function esc(str) {
     return String(str)
