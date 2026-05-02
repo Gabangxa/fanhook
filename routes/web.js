@@ -3,28 +3,74 @@ const path = require('path');
 
 const router = express.Router();
 
-const NAV = `
-<nav class="nav">
-  <a href="/" class="nav-brand">FanHook</a>
-  <div class="nav-links">
-    <a href="/">Home</a>
-    <a href="/dashboard">Dashboard</a>
-    <a href="/docs">API Docs</a>
-  </div>
-</nav>`;
+// ---------- Inline SVG icons (lucide-style) ----------
+const ICON = {
+  webhook:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 0 1 2 17c.01-.7.2-1.4.57-2"/><path d="m6 17 3.13-5.78c.53-.97.1-2.18-.5-3.1a4 4 0 1 1 6.89-4.06"/><path d="m12 6 3.13 5.73C15.66 12.7 16.9 13 18 13a4 4 0 0 1 0 8"/></svg>',
+  route:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></svg>',
+  bar:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>',
+  bell:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>',
+  user:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+  menu:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>',
+  sun:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
+  moon:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+  github:   '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.2.5-2.3 1.3-3.1-.2-.4-.6-1.6 0-3.2 0 0 1-.3 3.4 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.6.2 2.8.1 3.2.8.8 1.3 1.9 1.3 3.1 0 4.6-2.8 5.6-5.5 5.9.5.4.9 1.2.9 2.4v3.6c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>',
+  arrowR:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>',
+  zap:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+  shield:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+  activity: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+  database: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>',
+  message:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+  code:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+  copy:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  check:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+  checkC:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+  pause:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>',
+  trash:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
+  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  filter:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>',
+  plus:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  x:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>',
+  refresh:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
+  clock:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+};
+
+const FH_LOGO = `<a href="/" class="fh-logo"><div class="fh-logo-mark">F</div><span class="fh-logo-text">FanHook</span></a>`;
+
+const THEME_INIT = `<script>(function(){try{var t=localStorage.getItem('fh-theme')||'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>`;
 
 const HEAD = (title) => `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${title}</title>
   <link rel="stylesheet" href="/style.css" />
+  ${THEME_INIT}
 </head>
 <body>`;
 
-const FOOTER = `<footer class="footer">FanHook — Built for indie developers &amp; small teams</footer>`;
+const THEME_TOGGLE = `<button id="theme-toggle" class="icon-btn" aria-label="Toggle dark mode" onclick="toggleTheme()">${ICON.moon}</button>`;
 
+const THEME_SCRIPT = `<script>
+function toggleTheme(){
+  var root=document.documentElement;
+  var cur=root.getAttribute('data-theme')==='dark'?'light':'dark';
+  root.setAttribute('data-theme',cur);
+  try{localStorage.setItem('fh-theme',cur);}catch(e){}
+  var btn=document.getElementById('theme-toggle');
+  if(btn) btn.innerHTML = cur==='dark' ? \`${ICON.sun}\` : \`${ICON.moon}\`;
+}
+(function(){
+  var btn=document.getElementById('theme-toggle');
+  if(btn && document.documentElement.getAttribute('data-theme')==='dark'){
+    btn.innerHTML = \`${ICON.sun}\`;
+  }
+})();
+</script>`;
+
+const FOOTER = `<footer class="footer">FanHook &mdash; Built for indie developers &amp; small teams</footer>`;
+
+// ---------- Health & OpenAPI ----------
 router.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -33,446 +79,476 @@ router.get('/openapi.json', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'openapi.json'));
 });
 
-router.get('/docs', (req, res) => {
-  const html = `${HEAD('FanHook API Docs')}
-${NAV}
-<div class="docs-layout">
+// ---------- Landing page ----------
+router.get('/', (req, res) => {
+  const html = `${HEAD('FanHook — Webhook fanout made delightful.')}
+<nav class="topnav">
+  ${FH_LOGO}
+  <div class="topnav-actions">
+    ${THEME_TOGGLE}
+    <a href="/docs" class="topnav-link">Documentation</a>
+    <a href="/dashboard" class="pill btn-ghost">Sign In</a>
+  </div>
+</nav>
 
-  <aside class="docs-sidebar">
-    <div class="docs-sidebar-title">Navigation</div>
-    <a href="#sinks" class="docs-sidebar-link">Sinks</a>
-    <a href="#routes" class="docs-sidebar-link">Routes</a>
-    <a href="#billing" class="docs-sidebar-link">Billing</a>
-    <a href="#ingest" class="docs-sidebar-link">Ingest</a>
-    <a href="#response-codes" class="docs-sidebar-link">Response Codes</a>
-  </aside>
+<main class="landing-main">
+  <div class="live-pill">
+    <span class="live-dot"></span>
+    <span>v0.1 is now live</span>
+  </div>
 
-  <main class="docs-main">
+  <h1 class="hero-title">
+    Webhook fanout <br />
+    <span class="grad">made delightful.</span>
+  </h1>
+  <p class="hero-sub">
+    Ingest once, verify securely, and broadcast to multiple destinations effortlessly. The relay API your team will actually love using.
+  </p>
 
-    <div class="fade-in" style="margin-top:0.5rem;">
-      <div class="section-label">Reference</div>
-      <h1 class="section-title">API Documentation</h1>
-      <p style="color:var(--text-secondary);max-width:560px;margin-bottom:2.5rem;">
-        Management endpoints live under <code>/api</code> (Bearer auth). Ingest endpoints live under <code>/ingest</code> (signature-verified).
-      </p>
+  <div class="hero-ctas">
+    <a href="/dashboard" class="pill btn-primary">
+      Launch Dashboard
+      ${ICON.arrowR}
+    </a>
+    <a href="https://github.com/" target="_blank" rel="noopener" class="pill btn-ghost">
+      ${ICON.github}
+      View Source
+    </a>
+  </div>
+
+  <div class="flow">
+    <div class="flow-node">
+      <div class="flow-node-mark">${ICON.webhook}</div>
+      <div class="flow-node-label">Source Event</div>
     </div>
 
-    <details id="sinks" class="docs-details fade-in fade-in-d1" open>
-      <summary class="endpoint-group-title">
-        <span class="docs-chevron">&#9656;</span> Sinks
-      </summary>
-      <div class="endpoint-card">
+    <div class="flow-link">
+      <div class="flow-link-chip">${ICON.zap}<span>FanHook</span></div>
+    </div>
+
+    <div class="flow-dest">
+      <div class="flow-dest-row">
+        <div class="flow-dest-icon pink">${ICON.message}</div>
+        <div class="flow-dest-label">Slack Alerts</div>
+      </div>
+      <div class="flow-dest-row">
+        <div class="flow-dest-icon blue">${ICON.database}</div>
+        <div class="flow-dest-label">Internal DB</div>
+      </div>
+      <div class="flow-dest-row">
+        <div class="flow-dest-icon amber">${ICON.code}</div>
+        <div class="flow-dest-label">Serverless Func</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="features">
+    <div class="feature">
+      <div class="feature-icon indigo">${ICON.zap}</div>
+      <h3>Lightning Fast</h3>
+      <p>Instant delivery with zero latency.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon sky">${ICON.shield}</div>
+      <h3>Secure by Default</h3>
+      <p>Automatic verification and trusted payloads only.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon rose">${ICON.activity}</div>
+      <h3>Granular Logs</h3>
+      <p>Real-time visibility and automatic retries.</p>
+    </div>
+  </div>
+
+  <section id="pricing" class="pricing">
+    <div class="plan">
+      <h3>Free</h3>
+      <div class="price">$0<span>/mo</span></div>
+      <ul>
+        <li>1 sink</li>
+        <li>1,000 events/month</li>
+        <li>3 fanout routes per sink</li>
+        <li>3 retry attempts</li>
+        <li>Stripe &amp; GitHub verification</li>
+        <li>Event log (last 50)</li>
+      </ul>
+      <a href="/dashboard" class="pill btn-ghost" style="display:flex;margin-top:1.5rem;width:100%;">Get started free</a>
+    </div>
+    <div class="plan plan-featured">
+      <div class="plan-badge">Most popular</div>
+      <h3>Starter</h3>
+      <div class="price">$9<span>/mo</span></div>
+      <ul>
+        <li>5 sinks</li>
+        <li>50,000 events/month</li>
+        <li>Everything in Free</li>
+        <li>Event log (last 200)</li>
+        <li>Email alerts on retry exhaustion</li>
+      </ul>
+      <a href="/dashboard#upgrade" class="pill btn-indigo" style="display:flex;margin-top:1.5rem;width:100%;">Upgrade to Starter</a>
+    </div>
+  </section>
+</main>
+
+${FOOTER}
+${THEME_SCRIPT}
+</body></html>`;
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
+});
+
+// ---------- Billing success ----------
+router.get('/billing/success', (req, res) => {
+  const html = `${HEAD('FanHook — Upgrade Successful')}
+<nav class="topnav">${FH_LOGO}<div class="topnav-actions">${THEME_TOGGLE}</div></nav>
+<div class="landing-main" style="padding-top:4rem;">
+  <div class="sink-status-icon" style="width:84px;height:84px;margin-bottom:1.5rem;">${ICON.checkC}</div>
+  <h1 class="hero-title" style="font-size:clamp(2rem,4vw,3rem);"><span class="grad">You're on Starter!</span></h1>
+  <p class="hero-sub">Your plan has been upgraded. You now have 50,000 events/month and 5 sinks. It may take a few seconds for the dashboard to reflect the change.</p>
+  <a href="/dashboard" class="pill btn-primary">Go to Dashboard ${ICON.arrowR}</a>
+</div>
+${FOOTER}
+${THEME_SCRIPT}
+</body></html>`;
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
+});
+
+// ---------- Docs ----------
+router.get('/docs', (req, res) => {
+  const html = `${HEAD('FanHook — API Docs')}
+<nav class="topnav">
+  ${FH_LOGO}
+  <div class="topnav-actions">
+    ${THEME_TOGGLE}
+    <a href="/dashboard" class="pill btn-ghost">Open Dashboard</a>
+  </div>
+</nav>
+
+<div class="docs-shell">
+  <aside class="docs-side">
+    <div class="docs-side-title">Reference</div>
+    <a href="#sinks">Sinks</a>
+    <a href="#routes">Routes</a>
+    <a href="#billing">Billing</a>
+    <a href="#ingest">Ingest</a>
+    <a href="#response-codes">Response Codes</a>
+  </aside>
+
+  <main>
+    <h1 style="font-family:var(--font-heading);font-weight:700;font-size:2.5rem;margin-bottom:0.5rem;">API Documentation</h1>
+    <p class="text-secondary" style="max-width:560px;margin-bottom:2.5rem;">
+      Management endpoints live under <code>/api</code> (Bearer auth). Ingest endpoints live under <code>/ingest</code> (signature-verified).
+    </p>
+
+    <section id="sinks" class="docs-section">
+      <h2>Sinks</h2>
+      <div class="endpoint">
         <div><span class="method method-post">POST</span></div>
         <div>
           <div class="endpoint-path">/api/sinks <span class="endpoint-auth">Bearer</span></div>
           <div class="endpoint-desc">Create a new sink. Body: <code>{"name":"...","provider":"stripe|github|generic"}</code></div>
         </div>
       </div>
-      <div class="endpoint-card">
+      <div class="endpoint">
         <div><span class="method method-get">GET</span></div>
         <div>
           <div class="endpoint-path">/api/sinks <span class="endpoint-auth">Bearer</span></div>
           <div class="endpoint-desc">List sinks for the authenticated API key.</div>
         </div>
       </div>
-      <div class="endpoint-card">
+      <div class="endpoint">
         <div><span class="method method-get">GET</span></div>
         <div>
           <div class="endpoint-path">/api/sinks/:id/events <span class="endpoint-auth">Bearer</span></div>
           <div class="endpoint-desc">Last 50 events with delivery attempts.</div>
         </div>
       </div>
-    </details>
+    </section>
 
-    <details id="routes" class="docs-details fade-in fade-in-d2" open>
-      <summary class="endpoint-group-title">
-        <span class="docs-chevron">&#9656;</span> Routes
-      </summary>
-      <div class="endpoint-card">
+    <section id="routes" class="docs-section">
+      <h2>Routes</h2>
+      <div class="endpoint">
         <div><span class="method method-post">POST</span></div>
         <div>
           <div class="endpoint-path">/api/sinks/:id/routes <span class="endpoint-auth">Bearer</span></div>
           <div class="endpoint-desc">Add a destination URL. Body: <code>{"url":"https://..."}</code></div>
         </div>
       </div>
-      <div class="endpoint-card">
+      <div class="endpoint">
         <div><span class="method method-delete">DELETE</span></div>
         <div>
           <div class="endpoint-path">/api/sinks/:id/routes/:routeId <span class="endpoint-auth">Bearer</span></div>
           <div class="endpoint-desc">Remove a route. Returns 204.</div>
         </div>
       </div>
-    </details>
+    </section>
 
-    <details id="billing" class="docs-details fade-in fade-in-d3" open>
-      <summary class="endpoint-group-title">
-        <span class="docs-chevron">&#9656;</span> Billing
-      </summary>
-      <div class="endpoint-card">
+    <section id="billing" class="docs-section">
+      <h2>Billing</h2>
+      <div class="endpoint">
         <div><span class="method method-get">GET</span></div>
         <div>
           <div class="endpoint-path">/api/billing/status <span class="endpoint-auth">Bearer</span></div>
           <div class="endpoint-desc">Current tier, events used this month, and limit.</div>
         </div>
       </div>
-      <div class="endpoint-card">
+      <div class="endpoint">
         <div><span class="method method-post">POST</span></div>
         <div>
           <div class="endpoint-path">/api/billing/checkout <span class="endpoint-auth">Bearer</span></div>
           <div class="endpoint-desc">Create a Stripe Checkout session to upgrade to Starter ($9/mo). Returns <code>{"url":"..."}</code>.</div>
         </div>
       </div>
-    </details>
+    </section>
 
-    <details id="ingest" class="docs-details fade-in fade-in-d4" open>
-      <summary class="endpoint-group-title">
-        <span class="docs-chevron">&#9656;</span> Ingest
-      </summary>
-      <div class="endpoint-card">
+    <section id="ingest" class="docs-section">
+      <h2>Ingest</h2>
+      <div class="endpoint">
         <div><span class="method method-post">POST</span></div>
         <div>
           <div class="endpoint-path">/ingest/:sinkId <span class="endpoint-auth">Signature</span></div>
           <div class="endpoint-desc">Receive a webhook. FanHook verifies the provider signature and fans out to all routes. Returns <code>429</code> when monthly limit is reached.</div>
         </div>
       </div>
-    </details>
+    </section>
 
-    <details id="response-codes" class="docs-details fade-in fade-in-d4" open>
-      <summary class="endpoint-group-title">
-        <span class="docs-chevron">&#9656;</span> Response Codes
-      </summary>
-      <div class="response-codes">
-        <div class="response-code"><span class="code-num code-2xx">200</span> <span style="color:var(--text-secondary)">OK</span></div>
-        <div class="response-code"><span class="code-num code-2xx">201</span> <span style="color:var(--text-secondary)">Created</span></div>
-        <div class="response-code"><span class="code-num code-2xx">204</span> <span style="color:var(--text-secondary)">No Content</span></div>
-        <div class="response-code"><span class="code-num code-4xx">400</span> <span style="color:var(--text-secondary)">Bad Request</span></div>
-        <div class="response-code"><span class="code-num code-4xx">401</span> <span style="color:var(--text-secondary)">Unauthorized</span></div>
-        <div class="response-code"><span class="code-num code-4xx">403</span> <span style="color:var(--text-secondary)">Forbidden</span></div>
-        <div class="response-code"><span class="code-num code-4xx">404</span> <span style="color:var(--text-secondary)">Not Found</span></div>
-        <div class="response-code"><span class="code-num code-4xx">429</span> <span style="color:var(--text-secondary)">Rate Limited</span></div>
-      </div>
-    </details>
-
+    <section id="response-codes" class="docs-section">
+      <h2>Response Codes</h2>
+      <div class="endpoint"><div><span class="method method-get">200</span></div><div class="endpoint-desc">OK</div></div>
+      <div class="endpoint"><div><span class="method method-post">201</span></div><div class="endpoint-desc">Created</div></div>
+      <div class="endpoint"><div><span class="method method-post">204</span></div><div class="endpoint-desc">No Content</div></div>
+      <div class="endpoint"><div><span class="method method-delete">400</span></div><div class="endpoint-desc">Bad Request</div></div>
+      <div class="endpoint"><div><span class="method method-delete">401</span></div><div class="endpoint-desc">Unauthorized</div></div>
+      <div class="endpoint"><div><span class="method method-delete">429</span></div><div class="endpoint-desc">Rate Limited</div></div>
+    </section>
   </main>
 </div>
+
 ${FOOTER}
+${THEME_SCRIPT}
 </body></html>`;
   res.setHeader('Content-Type', 'text/html');
   res.send(html);
 });
 
-router.get('/', (req, res) => {
-  const html = `${HEAD('FanHook — Affordable Webhook Fanout')}
-${NAV}
-
-<div class="container">
-
-  <section class="hero fade-in">
-    <h1>Webhook fanout that<br>doesn't cost $490/mo.</h1>
-    <p>
-      One webhook in. Many destinations out. Stripe &amp; GitHub signature verification,
-      automatic retries, and a real-time event log — starting free.
-    </p>
-    <div class="hero-buttons">
-      <a href="/dashboard" class="btn btn-primary">Open Dashboard</a>
-      <a href="/docs" class="btn btn-secondary">API Docs</a>
-    </div>
-  </section>
-
-  <section class="fade-in fade-in-d1" style="margin-bottom:4rem;">
-    <div style="text-align:center;margin-bottom:2.5rem;">
-      <div class="section-label">Workflow</div>
-      <div class="section-title">How it works</div>
-    </div>
-
-    <div class="timeline">
-      <div class="timeline-step">
-        <div class="timeline-dot">1</div>
-        <div class="timeline-content">
-          <h3>Create a sink</h3>
-          <p>POST to <code>/api/sinks</code> and get a unique ingest URL + API key in seconds.</p>
-        </div>
-      </div>
-      <div class="timeline-step">
-        <div class="timeline-dot">2</div>
-        <div class="timeline-content">
-          <h3>Point your provider</h3>
-          <p>Set the ingest URL as your Stripe or GitHub webhook endpoint. Zero config changes needed.</p>
-        </div>
-      </div>
-      <div class="timeline-step">
-        <div class="timeline-dot">3</div>
-        <div class="timeline-content">
-          <h3>FanHook verifies &amp; fans out</h3>
-          <p>Every incoming webhook is signature-verified, then forwarded in parallel to all your configured routes.</p>
-        </div>
-      </div>
-      <div class="timeline-step">
-        <div class="timeline-dot">4</div>
-        <div class="timeline-content">
-          <h3>Auto-retry on failure</h3>
-          <p>Failed deliveries are retried up to 3 times with linear backoff. Inspect results in the event log.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="compare-section fade-in fade-in-d2">
-    <div class="section-label" style="margin-bottom:0.75rem;">Comparison</div>
-    <h2 class="section-title" style="font-size:1.5rem;margin-bottom:1.25rem;">Why not Svix or Hookdeck?</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Service</th>
-          <th>Starting price</th>
-          <th>Fanout included</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td style="color:var(--text-secondary);">Svix</td>
-          <td style="color:var(--red);font-weight:600;">$490/mo</td>
-          <td style="color:var(--text-muted);">Yes</td>
-        </tr>
-        <tr>
-          <td style="color:var(--text-secondary);">Hookdeck</td>
-          <td style="color:var(--yellow);font-weight:600;">$15/mo</td>
-          <td style="color:var(--text-muted);">Limited</td>
-        </tr>
-        <tr class="compare-winner">
-          <td style="color:var(--accent-bright);">FanHook &#10024;</td>
-          <td style="color:var(--green);font-weight:700;">$0 → $9/mo</td>
-          <td style="color:var(--green);">&#10003; Yes</td>
-        </tr>
-      </tbody>
-    </table>
-  </section>
-
-  <section id="pricing" class="fade-in fade-in-d3" style="margin-bottom:4rem;">
-    <div style="text-align:center;margin-bottom:2.5rem;">
-      <div class="section-label">Plans</div>
-      <div class="section-title">Simple, transparent pricing</div>
-    </div>
-
-    <div class="pricing">
-      <div class="plan">
-        <h3>Free</h3>
-        <div class="price">$0<span>/mo</span></div>
-        <ul>
-          <li>1 sink</li>
-          <li>1,000 events/month</li>
-          <li>3 fanout routes per sink</li>
-          <li>3 retry attempts</li>
-          <li>Stripe &amp; GitHub verification</li>
-          <li>Event log (last 50)</li>
-        </ul>
-        <a href="/dashboard" class="btn btn-secondary" style="display:block;text-align:center;margin-top:1.5rem;width:100%;">Get started free</a>
-      </div>
-      <div class="plan plan-featured">
-        <div class="plan-badge">Most popular</div>
-        <h3>Starter</h3>
-        <div class="price">$9<span>/mo</span></div>
-        <ul>
-          <li>5 sinks</li>
-          <li>50,000 events/month</li>
-          <li>Everything in Free</li>
-          <li>Event log (last 200)</li>
-          <li>Email alerts on retry exhaustion</li>
-        </ul>
-        <a href="/dashboard#upgrade" class="btn btn-primary" style="display:block;text-align:center;margin-top:1.5rem;width:100%;">Upgrade to Starter</a>
-      </div>
-    </div>
-  </section>
-
-  <section class="fade-in fade-in-d4" style="margin-bottom:4rem;">
-    <div class="section-label">Get started</div>
-    <div class="section-title" style="font-size:1.5rem;">30-second quick start</div>
-    <pre><span class="comment"># 1. Create a sink</span>
-<span class="cmd">curl</span> <span class="flag">-X POST</span> https://your-app.replit.app/api/sinks \\
-  <span class="flag">-H</span> <span class="string">"Authorization: Bearer &lt;your_api_key&gt;"</span> \\
-  <span class="flag">-H</span> <span class="string">"Content-Type: application/json"</span> \\
-  <span class="flag">-d</span> <span class="string">'{"name":"my-stripe-sink","provider":"stripe"}'</span>
-
-<span class="comment"># 2. Add a destination route</span>
-<span class="cmd">curl</span> <span class="flag">-X POST</span> https://your-app.replit.app/api/sinks/&lt;sink_id&gt;/routes \\
-  <span class="flag">-H</span> <span class="string">"Authorization: Bearer &lt;your_api_key&gt;"</span> \\
-  <span class="flag">-H</span> <span class="string">"Content-Type: application/json"</span> \\
-  <span class="flag">-d</span> <span class="string">'{"url":"https://your-service.example.com/webhook"}'</span>
-
-<span class="comment"># 3. Point Stripe at your ingest URL</span>
-<span class="comment">#    https://your-app.replit.app/ingest/&lt;sink_id&gt;</span></pre>
-  </section>
-
-</div>
-
-${FOOTER}
-</body></html>`;
-  res.setHeader('Content-Type', 'text/html');
-  res.send(html);
-});
-
-router.get('/billing/success', (req, res) => {
-  const html = `${HEAD('FanHook — Upgrade Successful')}
-${NAV}
-<div class="container" style="text-align:center;padding:6rem 1rem;">
-  <div style="width:64px;height:64px;border-radius:50%;background:rgba(74,222,128,0.1);border:2px solid var(--green);display:flex;align-items:center;justify-content:center;margin:0 auto 1.5rem;font-size:1.5rem;">&#10003;</div>
-  <h1 style="font-size:2rem;font-weight:800;background:linear-gradient(135deg,var(--green),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:0.5rem;">You're on Starter!</h1>
-  <p style="color:var(--text-secondary);font-size:1.1rem;max-width:480px;margin:1rem auto 2rem;">
-    Your plan has been upgraded. You now have 50,000 events/month and 5 sinks.
-    It may take a few seconds for the dashboard to reflect the change.
-  </p>
-  <a href="/dashboard" class="btn btn-primary">Go to Dashboard</a>
-</div>
-${FOOTER}
-</body></html>`;
-  res.setHeader('Content-Type', 'text/html');
-  res.send(html);
-});
-
+// ---------- Dashboard ----------
 router.get('/dashboard', (req, res) => {
-  const html = `${HEAD('FanHook Dashboard')}
-${NAV}
+  const html = `${HEAD('FanHook — Dashboard')}
+<div class="app-shell">
+  <div id="sidebar-overlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
 
-<div class="container">
-  <div class="fade-in" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-top:2rem;margin-bottom:1.5rem;">
-    <div>
-      <div class="section-label">Control Panel</div>
-      <h1 class="section-title" style="margin-bottom:0;">Dashboard</h1>
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      ${FH_LOGO}
+      <button class="sidebar-close" onclick="closeSidebar()" aria-label="Close menu">${ICON.menu}</button>
     </div>
-    <div id="billing-badge" style="display:none;padding:0.35rem 1rem;border-radius:999px;font-size:0.8rem;font-weight:700;letter-spacing:0.04em;"></div>
-  </div>
+    <nav class="sidebar-nav">
+      <button class="side-nav-link nav-sinks active" data-view="sinks" onclick="setView('sinks')">${ICON.webhook}<span>Sinks</span></button>
+      <button class="side-nav-link nav-routes" data-view="routes" onclick="setView('routes')">${ICON.route}<span>Routes</span></button>
+      <button class="side-nav-link nav-logs" data-view="logs" onclick="setView('logs')">${ICON.bar}<span>Logs</span></button>
+    </nav>
+    <div class="sidebar-footer">
+      <button id="upgrade-side-btn" onclick="startCheckout(event)" class="pill btn-primary" style="width:100%;">Upgrade Pro</button>
+    </div>
+  </aside>
 
-  <div id="stats-section" class="stats-grid fade-in" style="display:none;">
-    <div class="stat-card">
-      <div class="stat-label">Tier</div>
-      <div class="stat-value" id="stat-tier">—</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Events Used</div>
-      <div class="stat-value" id="stat-events">—</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Monthly Limit</div>
-      <div class="stat-value" id="stat-limit">—</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Usage</div>
-      <div class="stat-value" id="stat-pct">—</div>
-    </div>
-  </div>
+  <div class="app-main">
+    <header class="app-header">
+      <div style="display:flex;align-items:center;gap:1rem;">
+        <button class="sidebar-toggle" onclick="openSidebar()" aria-label="Open menu">${ICON.menu}</button>
+        <h1 id="app-title" class="app-header-title">Manage Sinks</h1>
+      </div>
+      <div class="app-header-actions">
+        <span id="billing-badge" class="tier-pill" style="display:none;"></span>
+        ${THEME_TOGGLE}
+        <button class="bell-btn" aria-label="Notifications">${ICON.bell}<span class="bell-dot"></span></button>
+        <div class="avatar"><div>${ICON.user}</div></div>
+      </div>
+    </header>
 
-  <div id="onboarding" class="onboarding-card" style="display:none;">
-    <h2>&#128640; Getting started</h2>
-    <ol>
-      <li><span id="step1" style="color:var(--green);font-weight:600;">Sink created</span> — your ingest URL is ready below.</li>
-      <li id="step2-item">Add at least one <strong style="color:var(--text-primary);">route</strong> (a destination URL) in the Routes section.</li>
-      <li>Point Stripe or GitHub at your ingest URL: <code id="ingest-url-hint" style="font-size:.82rem;"></code></li>
-      <li>Send a test webhook and check the event log below.</li>
-    </ol>
-  </div>
+    <main class="app-content">
 
-  <div id="usage-section" style="display:none;margin-bottom:1.5rem;">
-    <div class="glass-card">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:0.75rem;">
-        <div>
-          <span style="color:var(--text-muted);font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;">Events this month</span>
-          <div id="usage-text" style="color:var(--text-primary);font-size:1.1rem;font-weight:700;margin-top:0.15rem;"></div>
+      <!-- Sinks View -->
+      <section id="view-sinks" class="view-shell">
+        <div class="view-header">
+          <div>
+            <h2>Incoming Webhooks</h2>
+            <p class="sub">Create sinks to receive events from external platforms.</p>
+          </div>
+          <button class="pill btn-yellow">${ICON.plus} Create Sink</button>
         </div>
-        <div id="upgrade-cta" style="display:none;">
-          <a id="upgrade-btn" href="#upgrade" onclick="startCheckout(event)" class="btn btn-primary" style="font-size:0.85rem;padding:0.5rem 1.2rem;">
-            Upgrade to Starter — $9/mo
-          </a>
+        <div id="sinks-loading" class="text-muted" style="padding:1rem;">Loading sinks&hellip;</div>
+        <div id="sinks-list"></div>
+      </section>
+
+      <!-- Routes View -->
+      <section id="view-routes" class="view-shell" style="display:none;">
+        <div class="view-header">
+          <div>
+            <h2>Fanout Routes</h2>
+            <p class="sub">Define where your incoming webhooks should be relayed to.</p>
+          </div>
+          <button class="pill btn-pink" onclick="document.getElementById('new-route-url').focus()">${ICON.plus} Add Route</button>
         </div>
-      </div>
-      <div class="usage-bar-track">
-        <div id="usage-bar" class="usage-bar-fill" style="width:0%;"></div>
-      </div>
-      <p id="usage-limit-msg" style="display:none;color:var(--red);margin:0.75rem 0 0;font-size:0.85rem;font-weight:500;">
-        Monthly limit reached. Upgrade to Starter to continue receiving events.
-      </p>
-    </div>
+
+        <div id="routes-loading" class="text-muted" style="padding:1rem;">Loading routes&hellip;</div>
+        <div id="routes-list"></div>
+
+        <div class="add-route-form">
+          <div class="field">
+            <label>New route URL</label>
+            <input type="url" id="new-route-url" placeholder="https://example.com/webhook" />
+          </div>
+          <button class="pill btn-pink" onclick="addRoute()">${ICON.plus} Add Route</button>
+        </div>
+        <p id="route-msg" style="display:none;font-size:0.9rem;margin:0.75rem 1rem 0;"></p>
+
+        <div id="onboarding" class="onboarding" style="display:none;margin-top:2rem;">
+          <h2>&#128640; Getting started</h2>
+          <ol>
+            <li><span id="step1" style="color:var(--green);font-weight:700;">Sink created</span> &mdash; your ingest URL is on the Sinks tab.</li>
+            <li id="step2-item">Add at least one <strong>route</strong> (a destination URL) above.</li>
+            <li>Point Stripe or GitHub at your ingest URL: <code id="ingest-url-hint"></code></li>
+            <li>Send a test webhook and check the Logs tab.</li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- Logs View -->
+      <section id="view-logs" class="view-shell" style="display:none;">
+        <div class="view-header">
+          <div>
+            <h2>Activity Logs</h2>
+            <p class="sub">Real-time webhook ingestion and fanout delivery logs.</p>
+          </div>
+          <button class="pill btn-ghost" onclick="loadEvents()">${ICON.filter} Filter Logs</button>
+        </div>
+
+        <div id="stats-section" class="stats-grid" style="display:none;">
+          <div class="stat-card"><div class="stat-label">Tier</div><div class="stat-value" id="stat-tier">&mdash;</div></div>
+          <div class="stat-card"><div class="stat-label">Events Used</div><div class="stat-value" id="stat-events">&mdash;</div></div>
+          <div class="stat-card"><div class="stat-label">Monthly Limit</div><div class="stat-value" id="stat-limit">&mdash;</div></div>
+          <div class="stat-card"><div class="stat-label">Usage</div><div class="stat-value" id="stat-pct">&mdash;</div></div>
+        </div>
+
+        <div id="usage-section" class="usage-card" style="display:none;">
+          <div class="usage-card-header">
+            <div>
+              <div class="stat-label">Events this month</div>
+              <div id="usage-text" style="font-family:var(--font-heading);font-weight:700;font-size:1.25rem;color:var(--text-primary);margin-top:0.25rem;"></div>
+            </div>
+            <div id="upgrade-cta" style="display:none;">
+              <a id="upgrade-btn" href="#upgrade" onclick="startCheckout(event)" class="pill btn-indigo" style="font-size:0.9rem;">
+                Upgrade to Starter &mdash; $9/mo
+              </a>
+            </div>
+          </div>
+          <div class="usage-bar-track">
+            <div id="usage-bar" class="usage-bar-fill" style="width:0%;"></div>
+          </div>
+          <p id="usage-limit-msg" style="display:none;color:var(--red);margin:0.75rem 0 0;font-size:0.85rem;font-weight:600;">
+            Monthly limit reached. Upgrade to Starter to continue receiving events.
+          </p>
+        </div>
+
+        <div id="events-loading" class="text-muted" style="padding:1rem;">Loading events&hellip;</div>
+        <div class="logs-table-wrap" id="events-table" style="display:none;">
+          <table class="logs-table">
+            <thead>
+              <tr>
+                <th style="width:90px;text-align:center;">Status</th>
+                <th>Event ID</th>
+                <th style="text-align:center;">Attempts</th>
+                <th style="text-align:right;">Received</th>
+              </tr>
+            </thead>
+            <tbody id="events-body"></tbody>
+          </table>
+        </div>
+
+        <div id="dlq-section" class="dlq-section" style="display:none;">
+          <div class="view-header" style="border-bottom:none;padding-bottom:0;">
+            <div>
+              <h2>Dead Letter Queue <span id="dlq-count-badge" class="dlq-badge" style="display:none;"></span></h2>
+              <p class="sub">Events that exhausted all delivery attempts. Fix the downstream issue, then click <strong>Redrive</strong> to retry.</p>
+            </div>
+          </div>
+          <div class="logs-table-wrap">
+            <table class="logs-table">
+              <thead>
+                <tr>
+                  <th>Event ID</th>
+                  <th>Provider</th>
+                  <th>Failed At</th>
+                  <th style="text-align:center;">Attempts</th>
+                  <th style="text-align:right;">Action</th>
+                </tr>
+              </thead>
+              <tbody id="dlq-body"></tbody>
+            </table>
+          </div>
+          <p id="dlq-msg" style="display:none;font-size:0.9rem;margin:0.75rem 1rem 0;"></p>
+        </div>
+      </section>
+    </main>
   </div>
-
-  <section class="fade-in fade-in-d1" style="margin-bottom:2rem;">
-    <div class="dash-section-header">
-      <div class="dash-section-icon" style="background:rgba(99,102,241,0.1);color:var(--accent);">&#9881;</div>
-      <h2>Sinks</h2>
-    </div>
-    <div id="sinks-loading" style="color:var(--text-muted);padding:1rem;">Loading...</div>
-    <div class="table-wrap" id="sinks-table" style="display:none;">
-      <table>
-        <thead>
-          <tr><th>ID</th><th>Name</th><th>Provider</th><th>Tier</th><th>Ingest URL</th><th>Created</th></tr>
-        </thead>
-        <tbody id="sinks-body"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="fade-in fade-in-d2" style="margin-bottom:2rem;">
-    <div class="dash-section-header">
-      <div class="dash-section-icon" style="background:rgba(34,211,238,0.1);color:var(--cyan);">&#8594;</div>
-      <h2>Routes <span style="font-weight:400;color:var(--text-muted);font-size:0.85rem;">for demo_sink_1</span></h2>
-    </div>
-    <div id="routes-loading" style="color:var(--text-muted);padding:1rem;">Loading...</div>
-    <div class="table-wrap" id="routes-table" style="display:none;">
-      <table>
-        <thead>
-          <tr><th>ID</th><th>URL</th><th>Created</th><th>Action</th></tr>
-        </thead>
-        <tbody id="routes-body"></tbody>
-      </table>
-    </div>
-
-    <div style="display:flex;gap:1rem;align-items:flex-end;margin-top:1rem;flex-wrap:wrap;">
-      <div style="flex:1;min-width:280px;">
-        <label style="display:block;margin-bottom:0.3rem;color:var(--text-muted);font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">New route URL</label>
-        <input type="url" id="new-route-url" placeholder="https://example.com/webhook" style="width:100%;" />
-      </div>
-      <button onclick="addRoute()">Add Route</button>
-    </div>
-    <p id="route-msg" style="display:none;font-size:0.9rem;margin-top:0.5rem;"></p>
-  </section>
-
-  <section class="fade-in fade-in-d3" style="margin-bottom:3rem;">
-    <div class="dash-section-header">
-      <div class="dash-section-icon" style="background:rgba(74,222,128,0.1);color:var(--green);">&#9889;</div>
-      <h2>Recent Events <span style="font-weight:400;color:var(--text-muted);font-size:0.85rem;">demo_sink_1</span></h2>
-    </div>
-    <div id="events-loading" style="color:var(--text-muted);padding:1rem;">Loading...</div>
-    <div class="table-wrap" id="events-table" style="display:none;">
-      <table>
-        <thead>
-          <tr><th>Event ID</th><th>Status</th><th>Received At</th><th>Attempts</th></tr>
-        </thead>
-        <tbody id="events-body"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="fade-in fade-in-d4" id="dlq-section" style="margin-bottom:3rem;display:none;">
-    <div class="dash-section-header">
-      <div class="dash-section-icon" style="background:rgba(239,68,68,0.1);color:var(--red);">&#9760;</div>
-      <h2>Dead Letter Queue <span id="dlq-count-badge" style="display:none;margin-left:0.5rem;padding:0.1rem 0.55rem;border-radius:999px;font-size:0.75rem;font-weight:700;background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.25);"></span></h2>
-    </div>
-    <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1rem;">
-      Events that exhausted all delivery attempts. Fix the downstream issue, then click <strong style="color:var(--text-primary);">Redrive</strong> to retry with a fresh delivery cycle.
-    </p>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Event ID</th><th>Provider</th><th>Failed At</th><th>Attempts</th><th>Action</th></tr>
-        </thead>
-        <tbody id="dlq-body"></tbody>
-      </table>
-    </div>
-    <p id="dlq-msg" style="display:none;font-size:0.9rem;margin-top:0.5rem;"></p>
-  </section>
 </div>
 
-${FOOTER}
-
+${THEME_SCRIPT}
 <script>
+  // ---- SVG icons reused in JS-rendered rows ----
+  var SVG = {
+    check:    \`${ICON.check}\`,
+    x:        \`${ICON.x}\`,
+    refresh:  \`${ICON.refresh}\`,
+    clock:    \`${ICON.clock}\`,
+    copy:     \`${ICON.copy}\`,
+    trash:    \`${ICON.trash}\`,
+    settings: \`${ICON.settings}\`,
+    checkC:   \`${ICON.checkC}\`,
+    pause:    \`${ICON.pause}\`,
+    arrowR:   \`${ICON.arrowR}\`,
+    activity: \`${ICON.activity}\`
+  };
+
+  var TITLE_MAP = { sinks: 'Manage Sinks', routes: 'Routing Rules', logs: 'Activity Logs' };
+
+  function setView(view) {
+    ['sinks','routes','logs'].forEach(function(v){
+      var el = document.getElementById('view-'+v);
+      if (el) el.style.display = (v===view) ? '' : 'none';
+      var btn = document.querySelector('.side-nav-link[data-view="'+v+'"]');
+      if (btn) btn.classList.toggle('active', v===view);
+    });
+    var t = document.getElementById('app-title');
+    if (t) t.textContent = TITLE_MAP[view] || 'Dashboard';
+    closeSidebar();
+  }
+
+  function openSidebar(){
+    document.getElementById('sidebar').classList.add('open');
+    document.getElementById('sidebar-overlay').classList.add('open');
+  }
+  function closeSidebar(){
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('sidebar-overlay').classList.remove('open');
+  }
+
+  function copyText(text, btn){
+    try {
+      navigator.clipboard.writeText(text);
+      var orig = btn.innerHTML;
+      btn.innerHTML = SVG.check;
+      setTimeout(function(){ btn.innerHTML = orig; }, 1200);
+    } catch(e) {}
+  }
+
+  // Hash-based deep linking (e.g. #upgrade scrolls to logs view)
+  if (window.location.hash === '#upgrade') {
+    setTimeout(function(){ setView('logs'); }, 100);
+  }
+
   const API_KEY = 'demo_key_abc123';
   const SINK_ID = 'demo_sink_1';
   const headers = { 'Authorization': 'Bearer ' + API_KEY, 'Content-Type': 'application/json' };
@@ -491,17 +567,14 @@ ${FOOTER}
   const attemptCache = {};
 
   function statusBadge(status) {
-    const cls = status === 'delivered' ? 'badge-delivered'
-              : status === 'failed' ? 'badge-failed'
-              : 'badge-pending';
-    return '<span class="' + cls + '">' + esc(status) + '</span>';
+    if (status === 'delivered') return '<span class="badge-delivered" title="delivered">' + SVG.check + '</span>';
+    if (status === 'failed')    return '<span class="badge-failed" title="failed">'    + SVG.x     + '</span>';
+    return '<span class="badge-pending" title="pending">' + SVG.refresh + '</span>';
   }
 
   function tierBadge(tier) {
-    const isStarter = tier === 'starter';
-    return '<span style="display:inline-flex;align-items:center;gap:0.3rem;padding:0.15rem 0.6rem;border-radius:999px;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;' +
-      (isStarter ? 'background:rgba(74,222,128,0.1);color:#4ade80;border:1px solid rgba(74,222,128,0.2);' : 'background:rgba(100,116,139,0.1);color:#94a3b8;border:1px solid rgba(100,116,139,0.15);') +
-      '">' + esc(tier) + '</span>';
+    var cls = tier === 'starter' ? 'tier-pill starter' : 'tier-pill free';
+    return '<span class="' + cls + '">' + esc(tier) + '</span>';
   }
 
   async function loadBilling() {
@@ -511,11 +584,9 @@ ${FOOTER}
       const data = await res.json();
 
       const badge = document.getElementById('billing-badge');
+      badge.className = 'tier-pill ' + (data.tier === 'starter' ? 'starter' : 'free');
       badge.textContent = data.tier.toUpperCase();
-      badge.style.background = data.tier === 'starter' ? 'rgba(74,222,128,0.1)' : 'rgba(100,116,139,0.1)';
-      badge.style.color = data.tier === 'starter' ? '#4ade80' : '#94a3b8';
-      badge.style.border = '1px solid ' + (data.tier === 'starter' ? 'rgba(74,222,128,0.2)' : 'rgba(100,116,139,0.15)');
-      badge.style.display = 'inline-block';
+      badge.style.display = 'inline-flex';
 
       document.getElementById('stats-section').style.display = 'grid';
       document.getElementById('stat-tier').textContent = data.tier.charAt(0).toUpperCase() + data.tier.slice(1);
@@ -530,67 +601,118 @@ ${FOOTER}
       const bar = document.getElementById('usage-bar');
       bar.style.width = data.usage_pct + '%';
       if (data.usage_pct >= 90) {
-        bar.style.background = 'linear-gradient(90deg, #ef4444, #f87171)';
+        bar.style.background = 'linear-gradient(90deg, #EF4444, #F87171)';
       }
       if (data.usage_pct >= 100) {
         document.getElementById('usage-limit-msg').style.display = 'block';
       }
       if (data.tier === 'free') {
         document.getElementById('upgrade-cta').style.display = 'block';
+      } else {
+        var sideBtn = document.getElementById('upgrade-side-btn');
+        if (sideBtn) sideBtn.style.display = 'none';
       }
     } catch (_) {}
   }
 
   async function startCheckout(e) {
-    e.preventDefault();
-    const btn = document.getElementById('upgrade-btn');
-    btn.textContent = 'Redirecting\\u2026';
-    btn.style.opacity = '.6';
+    if (e && e.preventDefault) e.preventDefault();
+    const btn = document.getElementById('upgrade-btn') || document.getElementById('upgrade-side-btn');
+    if (btn) { btn.textContent = 'Redirecting\\u2026'; btn.style.opacity = '.6'; }
     try {
       const res = await fetch('/api/billing/checkout', { method: 'POST', headers });
       const data = await res.json();
       if (data.url) {
         window.location.href = data.url;
-      } else {
+      } else if (btn) {
         btn.textContent = data.error || 'Error \\u2014 try again';
         btn.style.opacity = '1';
       }
     } catch (err) {
-      btn.textContent = 'Error \\u2014 try again';
-      btn.style.opacity = '1';
+      if (btn) { btn.textContent = 'Error \\u2014 try again'; btn.style.opacity = '1'; }
     }
+  }
+
+  function sinkCardHtml(s) {
+    var ingestUrl = window.location.origin + '/ingest/' + s.id;
+    var isActive = (s.tier === 'starter' || s.tier === 'free' || !s.tier);
+    return '<div class="row-card">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;">' +
+        '<div class="sink-status-icon">' + SVG.checkC + '</div>' +
+        '<div class="route-actions"><button class="icon-action danger" title="Delete sink (disabled in demo)" disabled>' + SVG.trash + '</button></div>' +
+      '</div>' +
+      '<div style="margin-top:1.25rem;">' +
+        '<h3 style="font-family:var(--font-heading);font-weight:700;font-size:1.5rem;color:var(--text-primary);">' + esc(s.name) + '</h3>' +
+        '<p style="color:var(--text-muted);font-weight:600;font-size:0.85rem;margin-top:0.25rem;">' +
+          'Created ' + esc(s.created_at) + ' &middot; Provider: <strong style="color:var(--text-secondary);">' + esc(s.provider) + '</strong> ' + tierBadge(s.tier || 'free') +
+        '</p>' +
+      '</div>' +
+      '<div style="margin-top:1.25rem;">' +
+        '<label style="display:block;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin-bottom:0.5rem;margin-left:0.75rem;">Ingest endpoint URL</label>' +
+        '<div class="endpoint-row">' +
+          '<input id="ingest-input-' + esc(s.id) + '" readonly value="' + esc(ingestUrl) + '" />' +
+          '<button class="copy-btn" title="Copy" onclick="copyText(\\'' + esc(ingestUrl) + '\\', this)">' + SVG.copy + '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
   }
 
   async function loadSinks() {
     try {
       const res = await fetch('/api/sinks', { headers });
       const sinks = await res.json();
-      const tbody = document.getElementById('sinks-body');
-      tbody.innerHTML = sinks.map(s =>
-        '<tr>' +
-        '<td><code style="font-size:.8rem;">' + esc(s.id) + '</code></td>' +
-        '<td style="color:var(--text-primary);font-weight:500;">' + esc(s.name) + '</td>' +
-        '<td>' + esc(s.provider) + '</td>' +
-        '<td>' + tierBadge(s.tier || 'free') + '</td>' +
-        '<td><code style="font-size:.8rem;">/ingest/' + esc(s.id) + '</code></td>' +
-        '<td style="font-size:.8rem;color:var(--text-muted);">' + esc(s.created_at) + '</td>' +
-        '</tr>'
-      ).join('');
+      const list = document.getElementById('sinks-list');
+      list.innerHTML = sinks.map(sinkCardHtml).join('');
       document.getElementById('sinks-loading').style.display = 'none';
-      document.getElementById('sinks-table').style.display = 'block';
     } catch (e) {
       document.getElementById('sinks-loading').textContent = 'Failed to load sinks.';
     }
   }
 
+  function routeRowHtml(r) {
+    return '<div id="route-' + esc(r.id) + '" class="row-card" style="flex-direction:row;align-items:center;justify-content:space-between;gap:1.5rem;flex-wrap:wrap;">' +
+      '<div style="flex:1;min-width:240px;">' +
+        '<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">' +
+          '<span class="tag tag-method">POST</span>' +
+          '<span class="tag tag-active">active</span>' +
+        '</div>' +
+        '<div class="route-name">' + esc(r.url.replace(/^https?:\\/\\//,'').split('/')[0]) + '</div>' +
+        '<div class="route-url">' + esc(r.url) + '</div>' +
+        '<div class="text-muted" style="font-size:0.75rem;margin-top:0.4rem;font-family:var(--font-mono);">' + esc(r.id) + '</div>' +
+      '</div>' +
+      '<div class="route-actions">' +
+        '<button class="icon-action" title="Configure (disabled in demo)" disabled>' + SVG.settings + '</button>' +
+        '<button class="icon-action danger" title="Delete route" onclick="deleteRoute(\\'' + esc(r.id) + '\\')">' + SVG.trash + '</button>' +
+      '</div>' +
+    '</div>';
+  }
+
   async function loadRoutes() {
-    document.getElementById('routes-loading').style.display = 'none';
-    document.getElementById('routes-table').style.display = 'block';
-    document.getElementById('routes-body').innerHTML =
-      '<tr><td colspan="4" style="color:var(--text-muted);">Use the form below to add routes. ' +
-      'Route IDs are returned on creation.</td></tr>';
-    document.getElementById('ingest-url-hint').textContent =
-      window.location.origin + '/ingest/' + SINK_ID;
+    try {
+      const res = await fetch('/api/sinks/' + SINK_ID + '/routes', { headers });
+      let routes = [];
+      if (res.ok) {
+        const data = await res.json();
+        routes = Array.isArray(data) ? data : (data.routes || []);
+      }
+      currentRouteCount = routes.length;
+      const list = document.getElementById('routes-list');
+      if (routes.length === 0) {
+        list.innerHTML = '<div class="row-card text-muted" style="padding:1.5rem 1rem;">No routes yet. Add your first destination below.</div>';
+      } else {
+        list.innerHTML = routes.map(routeRowHtml).join('');
+      }
+      document.getElementById('routes-loading').style.display = 'none';
+      document.getElementById('ingest-url-hint').textContent =
+        window.location.origin + '/ingest/' + SINK_ID;
+    } catch (e) {
+      // Endpoint may not list routes — fall back to placeholder
+      document.getElementById('routes-loading').style.display = 'none';
+      document.getElementById('routes-list').innerHTML =
+        '<div class="row-card text-muted" style="padding:1.5rem 1rem;">Use the form below to add routes. Route IDs are returned on creation.</div>';
+      document.getElementById('ingest-url-hint').textContent =
+        window.location.origin + '/ingest/' + SINK_ID;
+    }
   }
 
   async function addRoute() {
@@ -617,16 +739,10 @@ ${FOOTER}
           const s2 = document.getElementById('step2-item');
           if (s2) s2.style.opacity = '.5';
         }
-        const tr = document.createElement('tr');
-        tr.id = 'route-' + esc(data.id);
-        tr.innerHTML =
-          '<td><code style="font-size:.8rem;">' + esc(data.id) + '</code></td>' +
-          '<td style="color:var(--text-primary);">' + esc(data.url) + '</td>' +
-          '<td style="font-size:.8rem;color:var(--text-muted);">' + esc(data.created_at) + '</td>' +
-          '<td><button onclick="deleteRoute(\\'' + esc(data.id) + '\\')">Delete</button></td>';
-        const placeholder = document.querySelector('#routes-body tr td[colspan]');
-        if (placeholder) placeholder.closest('tr').remove();
-        document.getElementById('routes-body').appendChild(tr);
+        const list = document.getElementById('routes-list');
+        // Remove any "no routes" placeholder
+        if (list.querySelector('.text-muted')) list.innerHTML = '';
+        list.insertAdjacentHTML('beforeend', routeRowHtml(data));
       } else {
         msgEl.textContent = 'Error: ' + (data.error || 'Unknown');
         msgEl.style.color = 'var(--red)';
@@ -654,6 +770,16 @@ ${FOOTER}
     }
   }
 
+  function eventRowHtml(e) {
+    var attempts = e.delivery_attempts ? e.delivery_attempts.length : 0;
+    return '<tr id="event-row-' + esc(e.id) + '" class="event-row" title="Click to toggle attempt details" onclick="toggleDetail(\\'' + esc(e.id) + '\\',this)">' +
+      '<td style="text-align:center;">' + statusBadge(e.status) + '</td>' +
+      '<td class="id-cell"><code>' + esc(e.id) + '</code></td>' +
+      '<td class="attempts-cell" style="text-align:center;">' + attempts + '</td>' +
+      '<td style="text-align:right;"><span class="time-pill">' + SVG.clock + esc(e.received_at) + '</span></td>' +
+      '</tr>';
+  }
+
   async function loadEvents() {
     try {
       const res = await fetch('/api/sinks/' + SINK_ID + '/events', { headers });
@@ -674,14 +800,7 @@ ${FOOTER}
           });
         }
       });
-      tbody.innerHTML = events.map(e =>
-        '<tr id="event-row-' + esc(e.id) + '" style="cursor:pointer;" title="Click to toggle attempt details" onclick="toggleDetail(\'' + esc(e.id) + '\',this)">' +
-        '<td><code style="font-size:.8rem;">' + esc(e.id) + '</code></td>' +
-        '<td>' + statusBadge(e.status) + '</td>' +
-        '<td style="font-size:.8rem;color:var(--text-muted);">' + esc(e.received_at) + '</td>' +
-        '<td style="color:var(--text-primary);font-weight:600;">' + (e.delivery_attempts ? e.delivery_attempts.length : 0) + '</td>' +
-        '</tr>'
-      ).join('');
+      tbody.innerHTML = events.map(eventRowHtml).join('');
       document.getElementById('events-loading').style.display = 'none';
       document.getElementById('events-table').style.display = 'block';
 
@@ -694,14 +813,6 @@ ${FOOTER}
   }
 
   // ---- Live event updates via Server-Sent Events ----
-  // Opens an EventSource to /api/sinks/:id/stream (auth via ?key= since
-  // EventSource cannot set custom headers). On each incoming message the event
-  // log is updated in place (status badge swap) or prepended (new pending row).
-  // The server keeps the SSE connection open and retries NATS on a backoff
-  // schedule, so the stream self-heals without a page refresh.
-  // On a hard connection error the client degrades to 10-second polling; the
-  // fallback is cancelled automatically on the first live data message.
-
   let ssePollingInterval = null;
 
   function connectSSE() {
@@ -710,7 +821,6 @@ ${FOOTER}
     );
 
     es.onmessage = function (event) {
-      // Cancel any polling fallback the moment live data arrives
       if (ssePollingInterval) {
         clearInterval(ssePollingInterval);
         ssePollingInterval = null;
@@ -726,12 +836,9 @@ ${FOOTER}
   }
 
   function handleStatusUpdate(data) {
-    // data: { event_id, sink_id, status, received_at?,
-    //         attempt_number?, http_status?, error_message?, attempts? }
     const tbody = document.getElementById('events-body');
     if (!tbody) return;
 
-    // Cache attempt details for the expand-on-click detail row
     if (data.attempts && data.attempts.length > 0) {
       attemptCache[data.event_id] = data.attempts;
     } else if (data.attempt_number != null) {
@@ -751,13 +858,10 @@ ${FOOTER}
       );
       if (badgeEl) badgeEl.outerHTML = statusBadge(data.status);
 
-      // Update attempt count cell (last <td>)
+      // Update attempt count cell (3rd <td>)
       if (data.attempt_number != null) {
-        const cells = existingRow.querySelectorAll('td');
-        const attemptsCell = cells[cells.length - 1];
-        if (attemptsCell) {
-          attemptsCell.textContent = data.attempt_number;
-        }
+        const cell = existingRow.querySelector('.attempts-cell');
+        if (cell) cell.textContent = data.attempt_number;
       }
 
       // If the detail row is currently open, refresh it too
@@ -766,19 +870,17 @@ ${FOOTER}
         detailRow.querySelector('td').innerHTML = buildDetailHtml(data.event_id);
       }
     } else if (data.status === 'pending') {
-      // New event — prepend a row and increment the usage counter
       const tr = document.createElement('tr');
       tr.id = 'event-row-' + data.event_id;
-      tr.style.cursor = 'pointer';
+      tr.className = 'event-row';
       tr.title = 'Click to toggle attempt details';
       tr.onclick = function () { toggleDetail(data.event_id, this); };
       tr.innerHTML =
-        '<td><code style="font-size:.8rem;">' + esc(data.event_id) + '</code></td>' +
-        '<td>' + statusBadge(data.status) + '</td>' +
-        '<td style="font-size:.8rem;color:var(--text-muted);">' +
-          esc(data.received_at || new Date().toISOString()) + '</td>' +
-        '<td style="color:var(--text-primary);font-weight:600;">0</td>';
-      // Ensure the table is visible before inserting
+        '<td style="text-align:center;">' + statusBadge(data.status) + '</td>' +
+        '<td class="id-cell"><code>' + esc(data.event_id) + '</code></td>' +
+        '<td class="attempts-cell" style="text-align:center;">0</td>' +
+        '<td style="text-align:right;"><span class="time-pill">' + SVG.clock +
+          esc(data.received_at || new Date().toISOString()) + '</span></td>';
       document.getElementById('events-loading').style.display = 'none';
       document.getElementById('events-table').style.display = 'block';
       if (tbody.firstChild) {
@@ -793,20 +895,19 @@ ${FOOTER}
   function buildDetailHtml(eventId) {
     const attempts = attemptCache[eventId];
     if (!attempts || attempts.length === 0) {
-      return '<em style="color:var(--text-muted);font-size:0.82rem;">No attempt details available yet.</em>';
+      return '<em class="text-muted" style="font-size:0.82rem;">No attempt details available yet.</em>';
     }
     return attempts.map(function (a) {
-      const statusColor = a.http_status && a.http_status < 300 ? 'var(--green)'
-                        : a.http_status ? 'var(--red)'
-                        : 'var(--text-muted)';
+      const okStatus = a.http_status && a.http_status < 300;
       const httpLabel = a.http_status ? 'HTTP ' + a.http_status : 'No response';
-      const errLabel  = a.error_message ? ' &mdash; ' + esc(a.error_message) : '';
-      const routeLabel = a.route_id ? '<code style="font-size:0.75rem;color:var(--text-muted);">' + esc(a.route_id) + '</code>' : '';
-      return '<div style="display:flex;align-items:center;gap:0.75rem;padding:0.25rem 0;font-size:0.82rem;">' +
-        '<span style="font-weight:700;color:var(--text-muted);">Attempt ' + a.attempt_number + '</span>' +
-        '<span style="font-weight:600;color:' + statusColor + ';">' + httpLabel + '</span>' +
-        '<span style="color:var(--red);">' + errLabel + '</span>' +
-        (routeLabel ? '<span>Route: ' + routeLabel + '</span>' : '') +
+      const httpClass = okStatus ? 'att-status ok' : (a.http_status ? 'att-status bad' : 'att-status');
+      const errLabel  = a.error_message ? '<span class="att-err">&mdash; ' + esc(a.error_message) + '</span>' : '';
+      const routeLabel = a.route_id ? '<span>Route: <code>' + esc(a.route_id) + '</code></span>' : '';
+      return '<div class="attempt-line">' +
+        '<span class="att-num">Attempt ' + a.attempt_number + '</span>' +
+        '<span class="' + httpClass + '">' + httpLabel + '</span>' +
+        errLabel +
+        routeLabel +
         '</div>';
     }).join('');
   }
@@ -819,10 +920,8 @@ ${FOOTER}
     }
     const detailRow = document.createElement('tr');
     detailRow.id = 'detail-row-' + eventId;
-    detailRow.innerHTML =
-      '<td colspan="4" style="background:rgba(15,23,42,0.6);padding:0.6rem 1rem;border-top:none;">' +
-      buildDetailHtml(eventId) +
-      '</td>';
+    detailRow.className = 'event-detail-row';
+    detailRow.innerHTML = '<td colspan="4">' + buildDetailHtml(eventId) + '</td>';
     if (row.nextSibling) {
       row.parentNode.insertBefore(detailRow, row.nextSibling);
     } else {
@@ -833,7 +932,7 @@ ${FOOTER}
   function incrementUsage() {
     const eventsEl = document.getElementById('stat-events');
     const limitEl  = document.getElementById('stat-limit');
-    if (!eventsEl || eventsEl.textContent === '\u2014') return;
+    if (!eventsEl || eventsEl.textContent === '\u2014' || eventsEl.textContent === '—') return;
     const used  = (parseInt(eventsEl.textContent.replace(/,/g, ''), 10) || 0) + 1;
     const limit = parseInt((limitEl ? limitEl.textContent : '1000').replace(/,/g, ''), 10) || 1000;
     const pct   = Math.min(100, Math.round((used / limit) * 100));
@@ -856,16 +955,16 @@ ${FOOTER}
 
       const badge = document.getElementById('dlq-count-badge');
       badge.textContent = entries.length;
-      badge.style.display = 'inline';
+      badge.style.display = 'inline-flex';
 
       const tbody = document.getElementById('dlq-body');
       tbody.innerHTML = entries.map(e =>
         '<tr id="dlq-row-' + esc(e.event_id) + '">' +
-        '<td><code style="font-size:.8rem;">' + esc(e.event_id) + '</code></td>' +
-        '<td style="color:var(--text-muted);">' + esc(e.provider || 'generic') + '</td>' +
-        '<td style="font-size:.8rem;color:var(--text-muted);">' + esc(e.failed_at) + '</td>' +
-        '<td style="color:var(--red);font-weight:600;">' + esc(e.attempt_count) + '</td>' +
-        '<td><button id="redrive-btn-' + esc(e.event_id) + '" onclick="redrive(\'' + esc(e.event_id) + '\')" style="background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.25);">Redrive</button></td>' +
+        '<td class="id-cell"><code>' + esc(e.event_id) + '</code></td>' +
+        '<td class="text-muted">' + esc(e.provider || 'generic') + '</td>' +
+        '<td class="text-muted" style="font-size:0.82rem;">' + esc(e.failed_at) + '</td>' +
+        '<td style="text-align:center;color:var(--red);font-weight:700;">' + esc(e.attempt_count) + '</td>' +
+        '<td style="text-align:right;"><button id="redrive-btn-' + esc(e.event_id) + '" class="pill btn-ghost" style="font-size:0.8rem;padding:0.5rem 1rem;color:var(--red);" onclick="redrive(\\'' + esc(e.event_id) + '\\')">Redrive</button></td>' +
         '</tr>'
       ).join('');
 
