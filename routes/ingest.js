@@ -58,6 +58,15 @@ router.post('/:sinkId', async (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(eventId, sinkId, sink.provider, payload, receivedAt, 'pending');
 
+  // Publish real-time status event to NATS core so SSE subscribers see the new
+  // event immediately. Best-effort — never blocks the ingest response.
+  natsLib.publishStatusEvent(sinkId, {
+    event_id: eventId,
+    sink_id: sinkId,
+    status: 'pending',
+    received_at: receivedAt,
+  }).catch(() => {});
+
   // Look up all routes for this sink
   const routes = db.prepare('SELECT * FROM routes WHERE sink_id = ?').all(sinkId);
 

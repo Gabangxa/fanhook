@@ -657,7 +657,7 @@ ${FOOTER}
       const events = await res.json();
       const tbody = document.getElementById('events-body');
       tbody.innerHTML = events.map(e =>
-        '<tr>' +
+        '<tr id="event-row-' + esc(e.id) + '">' +
         '<td><code style="font-size:.8rem;">' + esc(e.id) + '</code></td>' +
         '<td>' + statusBadge(e.status) + '</td>' +
         '<td style="font-size:.8rem;color:var(--text-muted);">' + esc(e.received_at) + '</td>' +
@@ -674,6 +674,89 @@ ${FOOTER}
       document.getElementById('events-loading').textContent = 'Failed to load events.';
     }
   }
+
+  // ---- Live event updates via Server-Sent Events ----
+  // Opens an EventSource to /api/sinks/:id/stream (auth via ?key= since
+  // EventSource cannot set custom headers). On each incoming message the event
+  // log is updated in place (status badge swap) or prepended (new pending row).
+  // On connection error the client degrades to a 10-second polling interval and
+  // cancels the fallback once SSE reconnects.
+
+  let ssePollingInterval = null;
+
+  function connectSSE() {
+    const es = new EventSource(
+      '/api/sinks/' + SINK_ID + '/stream?key=' + API_KEY
+    );
+
+    es.onopen = function () {
+      if (ssePollingInterval) {
+        clearInterval(ssePollingInterval);
+        ssePollingInterval = null;
+      }
+    };
+
+    es.onmessage = function (event) {
+      try { handleStatusUpdate(JSON.parse(event.data)); } catch (_) {}
+    };
+
+    es.onerror = function () {
+      if (!ssePollingInterval) {
+        ssePollingInterval = setInterval(loadEvents, 10000);
+      }
+    };
+  }
+
+  function handleStatusUpdate(data) {
+    // data: { event_id, sink_id, status, received_at? }
+    const tbody = document.getElementById('events-body');
+    if (!tbody) return;
+
+    const existingRow = document.getElementById('event-row-' + data.event_id);
+    if (existingRow) {
+      // Swap the status badge in place — do not rebuild the whole row
+      const badgeEl = existingRow.querySelector(
+        '.badge-delivered, .badge-failed, .badge-pending'
+      );
+      if (badgeEl) badgeEl.outerHTML = statusBadge(data.status);
+    } else if (data.status === 'pending') {
+      // New event — prepend a row and increment the usage counter
+      const tr = document.createElement('tr');
+      tr.id = 'event-row-' + data.event_id;
+      tr.innerHTML =
+        '<td><code style="font-size:.8rem;">' + esc(data.event_id) + '</code></td>' +
+        '<td>' + statusBadge(data.status) + '</td>' +
+        '<td style="font-size:.8rem;color:var(--text-muted);">' +
+          esc(data.received_at || new Date().toISOString()) + '</td>' +
+        '<td style="color:var(--text-primary);font-weight:600;">0</td>';
+      // Ensure the table is visible before inserting
+      document.getElementById('events-loading').style.display = 'none';
+      document.getElementById('events-table').style.display = 'block';
+      if (tbody.firstChild) {
+        tbody.insertBefore(tr, tbody.firstChild);
+      } else {
+        tbody.appendChild(tr);
+      }
+      incrementUsage();
+    }
+  }
+
+  function incrementUsage() {
+    const eventsEl = document.getElementById('stat-events');
+    const limitEl  = document.getElementById('stat-limit');
+    if (!eventsEl || eventsEl.textContent === '\u2014') return;
+    const used  = (parseInt(eventsEl.textContent.replace(/,/g, ''), 10) || 0) + 1;
+    const limit = parseInt((limitEl ? limitEl.textContent : '1000').replace(/,/g, ''), 10) || 1000;
+    const pct   = Math.min(100, Math.round((used / limit) * 100));
+    eventsEl.textContent = used.toLocaleString();
+    const pctEl = document.getElementById('stat-pct');
+    if (pctEl) pctEl.textContent = pct + '%';
+    const bar = document.getElementById('usage-bar');
+    if (bar) bar.style.width = pct + '%';
+    const usageText = document.getElementById('usage-text');
+    if (usageText) usageText.textContent = used.toLocaleString() + ' / ' + limit.toLocaleString();
+  }
+  // ---- end SSE ----
 
   async function loadDLQ() {
     try {
@@ -744,6 +827,7 @@ ${FOOTER}
   loadRoutes();
   loadEvents();
   loadDLQ();
+  connectSSE();
 </script>
 </body></html>`;
   res.setHeader('Content-Type', 'text/html');

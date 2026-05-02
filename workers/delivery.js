@@ -97,6 +97,7 @@ async function processMessage(msg) {
     console.warn(`[delivery] No routes for sink ${sinkId} — marking failed, writing to DLQ`);
     await writeToDLQ(eventId, sinkId, event.provider, rawBodyB64, headers, deliveryCount, 'no_routes');
     msg.ack();
+    natsLib.publishStatusEvent(sinkId, { event_id: eventId, sink_id: sinkId, status: 'failed' }).catch(() => {});
     return;
   }
 
@@ -131,12 +132,15 @@ async function processMessage(msg) {
   if (succeeded) {
     console.log(`[delivery] Event ${eventId} delivered — acking`);
     msg.ack();
+    // Publish real-time status update so SSE subscribers flip the badge live
+    natsLib.publishStatusEvent(sinkId, { event_id: eventId, sink_id: sinkId, status: 'delivered' }).catch(() => {});
   } else if (deliveryCount >= natsLib.MAX_DELIVER) {
     // All JetStream redeliveries exhausted — write to DLQ before final ack.
     db.prepare('UPDATE events SET status = ? WHERE id = ?').run('failed', eventId);
     console.warn(`[delivery] Event ${eventId} exhausted ${natsLib.MAX_DELIVER} attempts — writing to DLQ, acking`);
     await writeToDLQ(eventId, sinkId, event.provider, rawBodyB64, headers, deliveryCount, 'max_deliver_exceeded');
     msg.ack();
+    natsLib.publishStatusEvent(sinkId, { event_id: eventId, sink_id: sinkId, status: 'failed' }).catch(() => {});
   } else {
     // Transient failure — reset event to 'pending' so the UI does not show a
     // false permanent failure while JetStream redelivery is in progress.

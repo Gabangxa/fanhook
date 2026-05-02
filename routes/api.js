@@ -304,6 +304,77 @@ router.post('/sinks/:sinkId/dlq/:eventId/redrive', requireSinkAuth, async (req, 
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/sinks/:sinkId/stream — SSE endpoint for live event status updates
+//
+// Auth: ?key=<api_key> query param (EventSource cannot set custom headers).
+// Subscribes to events.status.<sinkId> on NATS core and forwards each message
+// as a `data:` SSE frame. Sends `: ping` keepalives every 25 seconds.
+// If NATS is unavailable, returns 503 so the client falls back to polling.
+// Cleans up the NATS subscription and interval on HTTP close.
+// ---------------------------------------------------------------------------
+router.get('/sinks/:sinkId/stream', async (req, res) => {
+  const { sinkId } = req.params;
+  const key = req.query.key;
+
+  if (!key) {
+    return res.status(401).json({ error: 'Missing key query parameter' });
+  }
+
+  const sink = db.prepare('SELECT * FROM sinks WHERE api_key = ?').get(key);
+  if (!sink) {
+    return res.status(401).json({ error: 'Invalid API key' });
+  }
+
+  if (sink.id !== sinkId) {
+    return res.status(403).json({ error: 'Forbidden: sink does not belong to this API key' });
+  }
+
+  // Set SSE headers and flush immediately so the browser establishes the stream
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  // Subscribe to NATS core subject — no persistence, just live fan-in
+  let sub;
+  try {
+    const nc = await natsLib.getConnection();
+    sub = nc.subscribe(`events.status.${sinkId}`);
+
+    // Forward each NATS message as an SSE data frame
+    (async () => {
+      try {
+        for await (const msg of sub) {
+          const data = natsLib.jc.decode(msg.data);
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        }
+      } catch (_) {
+        // Subscription closed — normal on disconnect
+      }
+    })();
+  } catch (_) {
+    // NATS unavailable — client's EventSource.onerror fires and falls back to polling
+    res.write(`event: error\ndata: {"error":"NATS unavailable"}\n\n`);
+    res.end();
+    return;
+  }
+
+  // Keepalive ping every 25 seconds to survive proxy idle timeouts
+  const pingInterval = setInterval(() => {
+    res.write(': ping\n\n');
+  }, 25_000);
+
+  // Cleanup when the browser disconnects
+  res.on('close', () => {
+    clearInterval(pingInterval);
+    if (sub) {
+      try { sub.unsubscribe(); } catch (_) {}
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/billing/status — tier + usage for the authenticated sink
 // ---------------------------------------------------------------------------
 router.get('/billing/status', requireAuth, (req, res) => {
