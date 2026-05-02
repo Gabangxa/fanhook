@@ -51,16 +51,13 @@ app.use((err, req, res, _next) => {
 });
 
 // ---------------------------------------------------------------------------
-// Delivery worker — forked as a child process when NATS_URL is set
+// Delivery worker — always forked; exits cleanly (code 0) when NATS is
+// unreachable, exits with non-zero on unexpected runtime errors.
+// Only restart on non-zero exit to avoid an infinite loop when NATS is down.
 // ---------------------------------------------------------------------------
 let deliveryWorker = null;
 
 function spawnDeliveryWorker() {
-  if (!natsLib.isEnabled()) {
-    console.log('[server] NATS_URL not set — using direct in-process fanout');
-    return;
-  }
-
   const workerPath = path.join(__dirname, 'workers', 'delivery.js');
   deliveryWorker = fork(workerPath, [], {
     env: process.env,
@@ -70,9 +67,16 @@ function spawnDeliveryWorker() {
   console.log(`[server] Delivery worker spawned (pid ${deliveryWorker.pid})`);
 
   deliveryWorker.on('exit', (code, signal) => {
-    console.warn(`[server] Delivery worker exited (code=${code}, signal=${signal}) — restarting in 5s`);
     deliveryWorker = null;
-    setTimeout(spawnDeliveryWorker, 5_000);
+    if (code === 0) {
+      // Clean exit — NATS was unavailable or worker was asked to stop.
+      // Direct in-process fanout will handle delivery until NATS comes up.
+      console.log('[server] Delivery worker exited cleanly (NATS unavailable or stopped) — direct fanout active');
+    } else {
+      // Unexpected crash — restart after a short delay
+      console.warn(`[server] Delivery worker crashed (code=${code}, signal=${signal}) — restarting in 5s`);
+      setTimeout(spawnDeliveryWorker, 5_000);
+    }
   });
 }
 

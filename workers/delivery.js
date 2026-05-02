@@ -5,7 +5,7 @@
  *
  * Subscribes to the WEBHOOKS stream as the "delivery-worker" durable consumer.
  * For each message:
- *   1. Reads the event and routes from SQLite
+ *   1. Decodes rawBodyB64 + headers from the NATS message payload
  *   2. Fans out to all destination URLs in parallel (via lib/fanout.js)
  *   3. Acks on success; naks with 30 s delay on failure so JetStream redelivers
  *   4. On final exhaustion (deliveryCount >= MAX_DELIVER): marks event failed, acks
@@ -31,7 +31,7 @@ async function processMessage(msg) {
     return;
   }
 
-  const { eventId, sinkId, contentType } = data;
+  const { eventId, sinkId, rawBodyB64, headers } = data;
   const deliveryCount = msg.info ? msg.info.deliveryCount : 1;
 
   console.log(`[delivery] Processing event ${eventId} (delivery #${deliveryCount})`);
@@ -57,12 +57,18 @@ async function processMessage(msg) {
     return;
   }
 
-  const rawBody = Buffer.from(event.payload || '{}');
-  const headers = contentType ? { 'content-type': contentType } : {};
+  // Reconstruct the original raw body from the base64-encoded NATS payload.
+  // If rawBodyB64 is missing (legacy message), fall back to the SQLite payload.
+  const rawBody = rawBodyB64
+    ? Buffer.from(rawBodyB64, 'base64')
+    : Buffer.from(event.payload || '{}');
+
+  // Use the original request headers from the NATS message for exact fidelity.
+  const forwardHeaders = headers || {};
 
   let succeeded = false;
   try {
-    await fanout(db, eventId, routes, rawBody, headers);
+    await fanout(db, eventId, routes, rawBody, forwardHeaders);
     const updated = db.prepare('SELECT status FROM events WHERE id = ?').get(eventId);
     succeeded = updated && updated.status === 'delivered';
   } catch (err) {
@@ -83,27 +89,30 @@ async function processMessage(msg) {
 }
 
 async function startWorker() {
-  if (!natsLib.isEnabled()) {
-    console.log('[delivery] NATS_URL not set — worker exiting (direct fanout mode active)');
+  console.log(`[delivery] Starting — connecting to NATS at ${natsLib.NATS_URL}`);
+
+  try {
+    await natsLib.getConnection();
+  } catch (err) {
+    // NATS is not reachable. Exit cleanly so server.js does not restart the
+    // worker in an infinite loop — the ingest route will use direct fanout.
+    console.warn(`[delivery] NATS unavailable (${err.message}) — exiting cleanly; direct fanout active`);
     process.exit(0);
   }
 
-  console.log('[delivery] Starting delivery worker...');
+  console.log('[delivery] Connected — consuming from WEBHOOKS stream as "delivery-worker"');
 
   try {
-    const nc = await natsLib.getConnection();
     const js = await natsLib.getJetStream();
     const consumer = await js.consumers.get(natsLib.STREAM_NAME, 'delivery-worker');
-
-    console.log('[delivery] Subscribed to WEBHOOKS stream as "delivery-worker"');
-
     const messages = await consumer.consume();
 
     for await (const msg of messages) {
       await processMessage(msg);
     }
   } catch (err) {
-    console.error('[delivery] Worker error:', err.message);
+    // Unexpected runtime error — exit with non-zero so server.js restarts us
+    console.error('[delivery] Worker runtime error:', err.message);
     process.exit(1);
   }
 }

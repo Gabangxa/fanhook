@@ -39,7 +39,8 @@ router.post('/:sinkId', async (req, res) => {
     });
   }
 
-  const rawBodyStr = req.body ? req.body.toString('utf8') : '';
+  const rawBody = req.body instanceof Buffer ? req.body : Buffer.from(req.body || '{}');
+  const rawBodyStr = rawBody.toString('utf8');
 
   // Verify signature — skip strict check for generic providers
   const { valid, error } = verifySignature(sink.provider, rawBodyStr, req.headers, sink.webhook_secret);
@@ -66,31 +67,30 @@ router.post('/:sinkId', async (req, res) => {
   }
 
   // ---------------------------------------------------------------------------
-  // Fanout dispatch: publish to NATS JetStream when available, otherwise fall
-  // back to the legacy in-process fire-and-forget fanout.
+  // Fanout dispatch: always attempt NATS JetStream (default: nats://localhost:4222).
+  // On publish failure (NATS unavailable), fall back to direct in-process fanout
+  // so ingest remains reliable regardless of NATS availability.
   // ---------------------------------------------------------------------------
-  if (natsLib.isEnabled()) {
-    try {
-      await natsLib.publish(sinkId, {
-        eventId,
-        sinkId,
-        contentType: req.headers['content-type'] || 'application/json',
-      });
-      console.log(`[ingest] Published event ${eventId} to NATS (sink ${sinkId})`);
-    } catch (err) {
-      console.error(`[ingest] NATS publish failed for event ${eventId}, falling back to direct fanout:`, err.message);
-      fanout(db, eventId, routes, req.body, req.headers).catch(() => {});
-    }
-  } else {
-    // Legacy in-process fanout — fire-and-forget
-    fanout(db, eventId, routes, req.body, req.headers).catch(() => {});
+  let deliveryMode = 'direct';
+  try {
+    await natsLib.publish(sinkId, {
+      eventId,
+      sinkId,
+      rawBodyB64: rawBody.toString('base64'),
+      headers: req.headers,
+    });
+    deliveryMode = 'nats';
+    console.log(`[ingest] Published event ${eventId} to NATS (sink ${sinkId})`);
+  } catch (err) {
+    console.warn(`[ingest] NATS unavailable for event ${eventId} — using direct fanout: ${err.message}`);
+    fanout(db, eventId, routes, rawBody, req.headers).catch(() => {});
   }
 
   return res.status(200).json({
     received: true,
     routed: routes.length,
     event_id: eventId,
-    delivery_mode: natsLib.isEnabled() ? 'nats' : 'direct',
+    delivery_mode: deliveryMode,
   });
 });
 
