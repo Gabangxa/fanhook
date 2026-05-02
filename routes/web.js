@@ -486,6 +486,9 @@ ${FOOTER}
       .replace(/'/g, '&#39;');
   }
   let currentRouteCount = 0;
+  // Stores the latest attempt details per event for the click-to-expand detail row.
+  // Populated by loadEvents() on initial load and updated live by handleStatusUpdate().
+  const attemptCache = {};
 
   function statusBadge(status) {
     const cls = status === 'delivered' ? 'badge-delivered'
@@ -656,8 +659,23 @@ ${FOOTER}
       const res = await fetch('/api/sinks/' + SINK_ID + '/events', { headers });
       const events = await res.json();
       const tbody = document.getElementById('events-body');
+      // Pre-populate attemptCache so click-to-expand works immediately
+      events.forEach(function (e) {
+        if (e.delivery_attempts && e.delivery_attempts.length > 0) {
+          attemptCache[e.id] = e.delivery_attempts.map(function (a) {
+            return {
+              route_id: a.route_id || null,
+              http_status: a.http_status || null,
+              attempt_number: a.attempt_number || 1,
+              error_message: a.http_status && a.http_status >= 400
+                ? 'HTTP ' + a.http_status
+                : (a.status === 'failed' ? 'Delivery failed' : null),
+            };
+          });
+        }
+      });
       tbody.innerHTML = events.map(e =>
-        '<tr id="event-row-' + esc(e.id) + '">' +
+        '<tr id="event-row-' + esc(e.id) + '" style="cursor:pointer;" title="Click to toggle attempt details" onclick="toggleDetail(\'' + esc(e.id) + '\',this)">' +
         '<td><code style="font-size:.8rem;">' + esc(e.id) + '</code></td>' +
         '<td>' + statusBadge(e.status) + '</td>' +
         '<td style="font-size:.8rem;color:var(--text-muted);">' + esc(e.received_at) + '</td>' +
@@ -708,21 +726,52 @@ ${FOOTER}
   }
 
   function handleStatusUpdate(data) {
-    // data: { event_id, sink_id, status, received_at? }
+    // data: { event_id, sink_id, status, received_at?,
+    //         attempt_number?, http_status?, error_message?, attempts? }
     const tbody = document.getElementById('events-body');
     if (!tbody) return;
 
+    // Cache attempt details for the expand-on-click detail row
+    if (data.attempts && data.attempts.length > 0) {
+      attemptCache[data.event_id] = data.attempts;
+    } else if (data.attempt_number != null) {
+      attemptCache[data.event_id] = [{
+        route_id: null,
+        http_status: data.http_status,
+        attempt_number: data.attempt_number,
+        error_message: data.error_message,
+      }];
+    }
+
     const existingRow = document.getElementById('event-row-' + data.event_id);
     if (existingRow) {
-      // Swap the status badge in place — do not rebuild the whole row
+      // Swap the status badge in place
       const badgeEl = existingRow.querySelector(
         '.badge-delivered, .badge-failed, .badge-pending'
       );
       if (badgeEl) badgeEl.outerHTML = statusBadge(data.status);
+
+      // Update attempt count cell (last <td>)
+      if (data.attempt_number != null) {
+        const cells = existingRow.querySelectorAll('td');
+        const attemptsCell = cells[cells.length - 1];
+        if (attemptsCell) {
+          attemptsCell.textContent = data.attempt_number;
+        }
+      }
+
+      // If the detail row is currently open, refresh it too
+      const detailRow = document.getElementById('detail-row-' + data.event_id);
+      if (detailRow) {
+        detailRow.querySelector('td').innerHTML = buildDetailHtml(data.event_id);
+      }
     } else if (data.status === 'pending') {
       // New event — prepend a row and increment the usage counter
       const tr = document.createElement('tr');
       tr.id = 'event-row-' + data.event_id;
+      tr.style.cursor = 'pointer';
+      tr.title = 'Click to toggle attempt details';
+      tr.onclick = function () { toggleDetail(data.event_id, this); };
       tr.innerHTML =
         '<td><code style="font-size:.8rem;">' + esc(data.event_id) + '</code></td>' +
         '<td>' + statusBadge(data.status) + '</td>' +
@@ -738,6 +787,46 @@ ${FOOTER}
         tbody.appendChild(tr);
       }
       incrementUsage();
+    }
+  }
+
+  function buildDetailHtml(eventId) {
+    const attempts = attemptCache[eventId];
+    if (!attempts || attempts.length === 0) {
+      return '<em style="color:var(--text-muted);font-size:0.82rem;">No attempt details available yet.</em>';
+    }
+    return attempts.map(function (a) {
+      const statusColor = a.http_status && a.http_status < 300 ? 'var(--green)'
+                        : a.http_status ? 'var(--red)'
+                        : 'var(--text-muted)';
+      const httpLabel = a.http_status ? 'HTTP ' + a.http_status : 'No response';
+      const errLabel  = a.error_message ? ' &mdash; ' + esc(a.error_message) : '';
+      const routeLabel = a.route_id ? '<code style="font-size:0.75rem;color:var(--text-muted);">' + esc(a.route_id) + '</code>' : '';
+      return '<div style="display:flex;align-items:center;gap:0.75rem;padding:0.25rem 0;font-size:0.82rem;">' +
+        '<span style="font-weight:700;color:var(--text-muted);">Attempt ' + a.attempt_number + '</span>' +
+        '<span style="font-weight:600;color:' + statusColor + ';">' + httpLabel + '</span>' +
+        '<span style="color:var(--red);">' + errLabel + '</span>' +
+        (routeLabel ? '<span>Route: ' + routeLabel + '</span>' : '') +
+        '</div>';
+    }).join('');
+  }
+
+  function toggleDetail(eventId, row) {
+    const existing = document.getElementById('detail-row-' + eventId);
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    const detailRow = document.createElement('tr');
+    detailRow.id = 'detail-row-' + eventId;
+    detailRow.innerHTML =
+      '<td colspan="4" style="background:rgba(15,23,42,0.6);padding:0.6rem 1rem;border-top:none;">' +
+      buildDetailHtml(eventId) +
+      '</td>';
+    if (row.nextSibling) {
+      row.parentNode.insertBefore(detailRow, row.nextSibling);
+    } else {
+      row.parentNode.appendChild(detailRow);
     }
   }
 

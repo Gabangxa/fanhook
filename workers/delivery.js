@@ -119,28 +119,51 @@ async function processMessage(msg) {
   }, 20_000);
 
   let succeeded = false;
+  let fanoutResult = { anySuccess: false, attempts: [] };
   try {
-    await fanout(db, eventId, routes, rawBody, forwardHeaders);
-    const updated = db.prepare('SELECT status FROM events WHERE id = ?').get(eventId);
-    succeeded = updated && updated.status === 'delivered';
+    fanoutResult = await fanout(db, eventId, routes, rawBody, forwardHeaders);
+    succeeded = fanoutResult.anySuccess;
   } catch (err) {
     console.error(`[delivery] fanout error for event ${eventId}:`, err.message);
   } finally {
     clearInterval(workingInterval);
   }
 
+  // Build a concise attempt summary for SSE consumers (last attempt per route)
+  const attemptSummary = fanoutResult.attempts.map(({ route_id, http_status, attempt_number, error_message }) => ({
+    route_id,
+    http_status,
+    attempt_number,
+    error_message,
+  }));
+
   if (succeeded) {
     console.log(`[delivery] Event ${eventId} delivered — acking`);
     msg.ack();
-    // Publish real-time status update so SSE subscribers flip the badge live
-    natsLib.publishStatusEvent(sinkId, { event_id: eventId, sink_id: sinkId, status: 'delivered' }).catch(() => {});
+    natsLib.publishStatusEvent(sinkId, {
+      event_id: eventId,
+      sink_id: sinkId,
+      status: 'delivered',
+      attempt_number: attemptSummary.length > 0 ? attemptSummary[0].attempt_number : 1,
+      http_status: attemptSummary.length > 0 ? attemptSummary[0].http_status : null,
+      error_message: null,
+      attempts: attemptSummary,
+    }).catch(() => {});
   } else if (deliveryCount >= natsLib.MAX_DELIVER) {
     // All JetStream redeliveries exhausted — write to DLQ before final ack.
     db.prepare('UPDATE events SET status = ? WHERE id = ?').run('failed', eventId);
     console.warn(`[delivery] Event ${eventId} exhausted ${natsLib.MAX_DELIVER} attempts — writing to DLQ, acking`);
     await writeToDLQ(eventId, sinkId, event.provider, rawBodyB64, headers, deliveryCount, 'max_deliver_exceeded');
     msg.ack();
-    natsLib.publishStatusEvent(sinkId, { event_id: eventId, sink_id: sinkId, status: 'failed' }).catch(() => {});
+    natsLib.publishStatusEvent(sinkId, {
+      event_id: eventId,
+      sink_id: sinkId,
+      status: 'failed',
+      attempt_number: attemptSummary.length > 0 ? attemptSummary[0].attempt_number : deliveryCount,
+      http_status: attemptSummary.length > 0 ? attemptSummary[0].http_status : null,
+      error_message: attemptSummary.length > 0 ? attemptSummary[0].error_message : 'max_deliver_exceeded',
+      attempts: attemptSummary,
+    }).catch(() => {});
   } else {
     // Transient failure — reset event to 'pending' so the UI does not show a
     // false permanent failure while JetStream redelivery is in progress.
