@@ -480,7 +480,10 @@ router.get('/dashboard', auth.requireUser, (req, res) => {
             <h2>Activity Logs</h2>
             <p class="sub">Real-time webhook ingestion and fanout delivery logs.</p>
           </div>
-          <button class="pill btn-ghost" onclick="loadEvents()">${ICON.filter} Filter Logs</button>
+          <div style="display:flex;align-items:center;gap:0.75rem;">
+            <select id="sink-selector" style="display:none;font-size:0.85rem;padding:0.4rem 0.75rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-primary);cursor:pointer;" onchange="selectSink(this.value)"></select>
+            <button class="pill btn-ghost" onclick="loadEvents()">${ICON.filter} Filter Logs</button>
+          </div>
         </div>
 
         <div id="stats-section" class="stats-grid" style="display:none;">
@@ -608,9 +611,12 @@ ${THEME_SCRIPT}
   }
 
   const API_KEY = ${apiKeyJs};
-  const SINK_ID = ${sinkIdJs};
+  let SINK_ID = ${sinkIdJs};
+  let selectedSinkId = SINK_ID;
   const USER_EMAIL = ${userEmailJs};
   const headers = { 'Authorization': 'Bearer ' + API_KEY, 'Content-Type': 'application/json' };
+  let currentSinks = [];
+  let activeSseConnections = [];
 
   function toggleUserMenu(e) {
     if (e && e.stopPropagation) e.stopPropagation();
@@ -734,12 +740,36 @@ ${THEME_SCRIPT}
     try {
       const res = await fetch('/api/sinks', { headers });
       const sinks = await res.json();
+      currentSinks = Array.isArray(sinks) ? sinks : [];
+      if (currentSinks.length > 0) {
+        SINK_ID = currentSinks[0].id;
+        selectedSinkId = currentSinks[0].id;
+      }
       const list = document.getElementById('sinks-list');
-      list.innerHTML = sinks.map(sinkCardHtml).join('');
+      list.innerHTML = currentSinks.map(sinkCardHtml).join('');
       document.getElementById('sinks-loading').style.display = 'none';
+
+      // Populate the sink selector dropdown in the Logs view
+      var selector = document.getElementById('sink-selector');
+      if (selector) {
+        selector.innerHTML = currentSinks.map(function(s) {
+          return '<option value="' + esc(s.id) + '">' + esc(s.name || s.id) + '</option>';
+        }).join('');
+        selector.value = selectedSinkId;
+        selector.style.display = currentSinks.length > 1 ? '' : 'none';
+      }
+
+      connectSSE();
     } catch (e) {
       document.getElementById('sinks-loading').textContent = 'Failed to load sinks.';
+      connectSSE();
     }
+  }
+
+  function selectSink(sinkId) {
+    selectedSinkId = sinkId;
+    loadEvents();
+    loadDLQ();
   }
 
   function routeRowHtml(r) {
@@ -855,7 +885,7 @@ ${THEME_SCRIPT}
 
   async function loadEvents() {
     try {
-      const res = await fetch('/api/sinks/' + SINK_ID + '/events', { headers });
+      const res = await fetch('/api/sinks/' + selectedSinkId + '/events', { headers });
       const events = await res.json();
       const tbody = document.getElementById('events-body');
       // Pre-populate attemptCache so click-to-expand works immediately
@@ -889,28 +919,50 @@ ${THEME_SCRIPT}
   let ssePollingInterval = null;
 
   function connectSSE() {
-    const es = new EventSource(
-      '/api/sinks/' + SINK_ID + '/stream?key=' + API_KEY
-    );
+    // Close any previously open connections before (re-)connecting
+    activeSseConnections.forEach(function (es) {
+      try { es.close(); } catch (_) {}
+    });
+    activeSseConnections = [];
 
-    es.onmessage = function (event) {
-      if (ssePollingInterval) {
-        clearInterval(ssePollingInterval);
-        ssePollingInterval = null;
-      }
-      try { handleStatusUpdate(JSON.parse(event.data)); } catch (_) {}
-    };
+    // Build the list of sinks to subscribe to. Fall back to the hardcoded
+    // demo sink when loadSinks() hasn't resolved yet or returned nothing.
+    var sinksToConnect = currentSinks.length > 0
+      ? currentSinks
+      : [{ id: SINK_ID, api_key: API_KEY }];
 
-    es.onerror = function () {
-      if (!ssePollingInterval) {
-        ssePollingInterval = setInterval(loadEvents, 10000);
-      }
-    };
+    sinksToConnect.forEach(function (sink) {
+      var sinkKey = sink.api_key || API_KEY;
+      var es = new EventSource(
+        '/api/sinks/' + sink.id + '/stream?key=' + sinkKey
+      );
+
+      es.onmessage = function (event) {
+        if (ssePollingInterval) {
+          clearInterval(ssePollingInterval);
+          ssePollingInterval = null;
+        }
+        try { handleStatusUpdate(JSON.parse(event.data)); } catch (_) {}
+      };
+
+      es.onerror = function () {
+        if (!ssePollingInterval) {
+          ssePollingInterval = setInterval(loadEvents, 10000);
+        }
+      };
+
+      activeSseConnections.push(es);
+    });
   }
 
   function handleStatusUpdate(data) {
     const tbody = document.getElementById('events-body');
     if (!tbody) return;
+
+    // When a sink_id is present in the SSE payload, only apply DOM updates to the
+    // currently-viewed sink's log table. Updates for background sinks are silently
+    // discarded; the table will refresh when the user switches sinks.
+    if (data.sink_id && data.sink_id !== selectedSinkId) return;
 
     if (data.attempts && data.attempts.length > 0) {
       attemptCache[data.event_id] = data.attempts;
@@ -1021,7 +1073,7 @@ ${THEME_SCRIPT}
 
   async function loadDLQ() {
     try {
-      const res = await fetch('/api/sinks/' + SINK_ID + '/dlq', { headers });
+      const res = await fetch('/api/sinks/' + selectedSinkId + '/dlq', { headers });
       if (!res.ok) return;
       const entries = await res.json();
       if (!entries || entries.length === 0) return;
@@ -1051,7 +1103,7 @@ ${THEME_SCRIPT}
     const msgEl = document.getElementById('dlq-msg');
     try {
       const res = await fetch(
-        '/api/sinks/' + SINK_ID + '/dlq/' + eventId + '/redrive',
+        '/api/sinks/' + selectedSinkId + '/dlq/' + eventId + '/redrive',
         { method: 'POST', headers }
       );
       const data = await res.json();
@@ -1088,7 +1140,6 @@ ${THEME_SCRIPT}
   loadRoutes();
   loadEvents();
   loadDLQ();
-  connectSSE();
 </script>
 </body></html>`;
   res.setHeader('Content-Type', 'text/html');
