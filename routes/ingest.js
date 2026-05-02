@@ -4,6 +4,7 @@ const db = require('../db');
 const { verifySignature } = require('../lib/verify');
 const { fanout } = require('../lib/fanout');
 const { getMonthlyEventCount, getEventLimit } = require('../lib/metering');
+const natsLib = require('../lib/nats');
 
 const router = express.Router();
 
@@ -12,7 +13,7 @@ const router = express.Router();
 // Note: express.raw({type: '*/*'}) is applied in server.js before this router
 // so req.body will be a Buffer containing the raw request body.
 // ---------------------------------------------------------------------------
-router.post('/:sinkId', (req, res) => {
+router.post('/:sinkId', async (req, res) => {
   const { sinkId } = req.params;
 
   const sink = db.prepare('SELECT * FROM sinks WHERE id = ?').get(sinkId);
@@ -64,15 +65,32 @@ router.post('/:sinkId', (req, res) => {
     return res.status(200).json({ received: true, routed: 0 });
   }
 
-  // Fire-and-forget fanout — do NOT await
-  fanout(db, eventId, routes, req.body, req.headers).catch(() => {
-    // Errors are handled inside fanout; this prevents unhandled rejections
-  });
+  // ---------------------------------------------------------------------------
+  // Fanout dispatch: publish to NATS JetStream when available, otherwise fall
+  // back to the legacy in-process fire-and-forget fanout.
+  // ---------------------------------------------------------------------------
+  if (natsLib.isEnabled()) {
+    try {
+      await natsLib.publish(sinkId, {
+        eventId,
+        sinkId,
+        contentType: req.headers['content-type'] || 'application/json',
+      });
+      console.log(`[ingest] Published event ${eventId} to NATS (sink ${sinkId})`);
+    } catch (err) {
+      console.error(`[ingest] NATS publish failed for event ${eventId}, falling back to direct fanout:`, err.message);
+      fanout(db, eventId, routes, req.body, req.headers).catch(() => {});
+    }
+  } else {
+    // Legacy in-process fanout — fire-and-forget
+    fanout(db, eventId, routes, req.body, req.headers).catch(() => {});
+  }
 
   return res.status(200).json({
     received: true,
     routed: routes.length,
     event_id: eventId,
+    delivery_mode: natsLib.isEnabled() ? 'nats' : 'direct',
   });
 });
 

@@ -8,6 +8,7 @@
   "dependencies": {
     "better-sqlite3": "^9.6.0",
     "express": "^4.22.1",
+    "nats": "^2.29.3",
     "node-fetch": "^3.3.2",
     "stripe": "^14.25.0",
     "uuid": "^9.0.1"
