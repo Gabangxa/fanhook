@@ -191,9 +191,11 @@ router.get('/sinks/:sinkId/dlq', requireSinkAuth, async (req, res) => {
 // POST /api/sinks/:sinkId/dlq/:eventId/redrive — redrive a DLQ entry
 //
 // 1. Looks up the entry in SQLite (always available) to get raw body + nats_seq
-// 2. Creates a fresh event record and dispatches delivery (NATS or direct fanout)
-// 3. Deletes the DLQ message from the NATS JetStream stream (if nats_seq is known)
-// 4. Marks the SQLite dlq_entries row as redriven
+// 2. Creates a fresh event record
+// 3. Dispatches delivery via NATS (preferred) or direct fanout (fallback)
+// 4. Only after confirmed dispatch: marks dlq_entries as redriven and deletes
+//    the DLQ message from the NATS JetStream stream (if nats_seq is known)
+//    The entry is left intact if dispatch fails so it can be redriven again.
 // ---------------------------------------------------------------------------
 router.post('/sinks/:sinkId/dlq/:eventId/redrive', requireSinkAuth, async (req, res) => {
   const { sinkId, eventId } = req.params;
@@ -215,6 +217,11 @@ router.post('/sinks/:sinkId/dlq/:eventId/redrive', requireSinkAuth, async (req, 
     return res.status(404).json({ error: 'Sink not found' });
   }
 
+  const routes = db.prepare('SELECT * FROM routes WHERE sink_id = ?').all(sinkId);
+  if (routes.length === 0) {
+    return res.status(422).json({ error: 'No routes configured for this sink; cannot redrive' });
+  }
+
   const newEventId = uuidv4();
   const receivedAt = new Date().toISOString();
   const rawBody = Buffer.from(entry.raw_body_b64 || '', 'base64');
@@ -228,38 +235,43 @@ router.post('/sinks/:sinkId/dlq/:eventId/redrive', requireSinkAuth, async (req, 
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(newEventId, sinkId, entry.provider || sink.provider, payload, receivedAt, 'pending');
 
-  // Mark DLQ entry as redriven before dispatch to prevent double-redrive
+  // Dispatch the redriven event via NATS (preferred) or direct fanout (fallback).
+  // We only commit the DLQ entry as redriven after dispatch is confirmed so that
+  // a failure leaves the entry intact and eligible for another redrive attempt.
+  let dispatchOk = false;
+  try {
+    await natsLib.publish(sinkId, {
+      eventId: newEventId,
+      sinkId,
+      rawBodyB64: entry.raw_body_b64 || '',
+      headers: originalHeaders,
+    });
+    dispatchOk = true;
+  } catch (_) {
+    // NATS unavailable — fall back to in-process fanout (fire-and-forget)
+    fanout(db, newEventId, routes, rawBody, originalHeaders).catch(() => {});
+    dispatchOk = true; // fanout initiated; treat as confirmed
+  }
+
+  if (!dispatchOk) {
+    // Both dispatch paths failed — keep DLQ entry intact, clean up the event row
+    db.prepare('DELETE FROM events WHERE id = ?').run(newEventId);
+    return res.status(502).json({ error: 'Dispatch failed; DLQ entry unchanged, retry redrive' });
+  }
+
+  // Dispatch confirmed — now commit the redriven state
   db.prepare(
     'UPDATE dlq_entries SET redriven = 1, redriven_at = ?, new_event_id = ? WHERE event_id = ?'
   ).run(receivedAt, newEventId, eventId);
 
-  // Dispatch the redriven event via NATS (preferred) or direct fanout (fallback)
-  const routes = db.prepare('SELECT * FROM routes WHERE sink_id = ?').all(sinkId);
-  if (routes.length > 0) {
+  // Delete the original DLQ message from the JetStream stream. Non-fatal if it
+  // fails — the 7-day TTL will expire it naturally.
+  if (entry.nats_seq) {
     try {
-      await natsLib.publish(sinkId, {
-        eventId: newEventId,
-        sinkId,
-        rawBodyB64: entry.raw_body_b64 || '',
-        headers: originalHeaders,
-      });
-
-      // Delete the original DLQ message from the JetStream stream now that it
-      // has been successfully redriven. nats_seq is stored when the message was
-      // published; if missing (NATS was down at failure time), skip deletion.
-      if (entry.nats_seq) {
-        try {
-          await natsLib.deleteDLQMessage(entry.nats_seq);
-        } catch (_) {
-          // Non-fatal: message will expire naturally via the 7-day TTL
-        }
-      }
-    } catch (natsErr) {
-      // NATS unavailable — fall back to in-process fanout
-      fanout(db, newEventId, routes, rawBody, originalHeaders).catch(() => {});
+      await natsLib.deleteDLQMessage(entry.nats_seq);
+    } catch (_) {
+      // Non-fatal: message will expire via the 7-day stream TTL
     }
-  } else {
-    db.prepare('UPDATE events SET status = ? WHERE id = ?').run('failed', newEventId);
   }
 
   return res.json({ redriven: true, new_event_id: newEventId });
