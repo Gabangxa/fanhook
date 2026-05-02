@@ -51,14 +51,17 @@ app.use((err, req, res, _next) => {
 });
 
 // ---------------------------------------------------------------------------
-// Delivery worker — always forked; exits cleanly (code 0) when NATS is
-// unreachable, exits with non-zero on unexpected runtime errors.
-// Only restart on non-zero exit to avoid an infinite loop when NATS is down.
+// Delivery worker — always forked so NATS_URL need not be set at startup.
+// The worker tries nats://localhost:4222 by default (or NATS_URL if set) and
+// exits cleanly (code 0) when NATS is unreachable; ingest then falls back to
+// direct in-process fanout automatically. Non-zero exit = crash → restart.
 // ---------------------------------------------------------------------------
 let deliveryWorker = null;
 
 function spawnDeliveryWorker() {
   const workerPath = path.join(__dirname, 'workers', 'delivery.js');
+  const natsTarget = process.env.NATS_URL || 'nats://localhost:4222';
+  console.log(`[server] Spawning delivery worker (NATS target: ${natsTarget})`);
   deliveryWorker = fork(workerPath, [], {
     env: process.env,
     stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
