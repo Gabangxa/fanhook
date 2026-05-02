@@ -157,21 +157,43 @@ router.delete('/sinks/:sinkId/routes/:routeId', requireSinkAuth, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/sinks/:sinkId/dlq — list last 50 undriven DLQ entries for a sink
+// GET /api/sinks/:sinkId/dlq — list last 50 DLQ entries for a sink
+//
+// Primary: uses JetStream OrderedConsumer to read from webhook.dlq.<sinkId>.
+// Fallback: reads from SQLite dlq_entries table when NATS is unavailable.
 // ---------------------------------------------------------------------------
-router.get('/sinks/:sinkId/dlq', requireSinkAuth, (req, res) => {
+router.get('/sinks/:sinkId/dlq', requireSinkAuth, async (req, res) => {
+  const { sinkId } = req.params;
+
+  // Try NATS JetStream first (authoritative DLQ store)
+  try {
+    const msgs = await natsLib.listDLQMessages(sinkId, 50);
+    return res.json(msgs);
+  } catch (_) {
+    // NATS unavailable — fall back to SQLite
+  }
+
+  // SQLite fallback: entries written by the delivery worker when NATS was reachable
+  // but before they were published to the stream (or entries from direct-fanout mode).
   const entries = db
     .prepare(
-      `SELECT * FROM dlq_entries
+      `SELECT event_id, sink_id, provider, failed_at, attempt_count, failure_reason,
+              headers, nats_seq
+       FROM dlq_entries
        WHERE sink_id = ? AND redriven = 0
        ORDER BY failed_at DESC LIMIT 50`
     )
-    .all(req.params.sinkId);
+    .all(sinkId);
   return res.json(entries);
 });
 
 // ---------------------------------------------------------------------------
 // POST /api/sinks/:sinkId/dlq/:eventId/redrive — redrive a DLQ entry
+//
+// 1. Looks up the entry in SQLite (always available) to get raw body + nats_seq
+// 2. Creates a fresh event record and dispatches delivery (NATS or direct fanout)
+// 3. Deletes the DLQ message from the NATS JetStream stream (if nats_seq is known)
+// 4. Marks the SQLite dlq_entries row as redriven
 // ---------------------------------------------------------------------------
 router.post('/sinks/:sinkId/dlq/:eventId/redrive', requireSinkAuth, async (req, res) => {
   const { sinkId, eventId } = req.params;
@@ -206,7 +228,7 @@ router.post('/sinks/:sinkId/dlq/:eventId/redrive', requireSinkAuth, async (req, 
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(newEventId, sinkId, entry.provider || sink.provider, payload, receivedAt, 'pending');
 
-  // Mark DLQ entry as redriven immediately so a double-click can't fire twice
+  // Mark DLQ entry as redriven before dispatch to prevent double-redrive
   db.prepare(
     'UPDATE dlq_entries SET redriven = 1, redriven_at = ?, new_event_id = ? WHERE event_id = ?'
   ).run(receivedAt, newEventId, eventId);
@@ -221,7 +243,18 @@ router.post('/sinks/:sinkId/dlq/:eventId/redrive', requireSinkAuth, async (req, 
         rawBodyB64: entry.raw_body_b64 || '',
         headers: originalHeaders,
       });
-    } catch (_) {
+
+      // Delete the original DLQ message from the JetStream stream now that it
+      // has been successfully redriven. nats_seq is stored when the message was
+      // published; if missing (NATS was down at failure time), skip deletion.
+      if (entry.nats_seq) {
+        try {
+          await natsLib.deleteDLQMessage(entry.nats_seq);
+        } catch (_) {
+          // Non-fatal: message will expire naturally via the 7-day TTL
+        }
+      }
+    } catch (natsErr) {
       // NATS unavailable — fall back to in-process fanout
       fanout(db, newEventId, routes, rawBody, originalHeaders).catch(() => {});
     }

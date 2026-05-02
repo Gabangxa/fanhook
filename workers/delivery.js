@@ -21,14 +21,14 @@ const natsLib = require(path.join(__dirname, '..', 'lib', 'nats'));
 
 const NAK_DELAY_MS = 30_000;
 
-async function writeToDLQ(eventId, sinkId, provider, rawBodyB64, headers, attemptCount) {
+async function writeToDLQ(eventId, sinkId, provider, rawBodyB64, headers, attemptCount, failureReason) {
   const failedAt = new Date().toISOString();
 
-  // Primary: write to SQLite (always available, survives NATS restart)
+  // Write to SQLite for raw-body storage (used by redrive endpoint)
   db.prepare(`
     INSERT OR IGNORE INTO dlq_entries
-      (event_id, sink_id, raw_body_b64, headers, provider, failed_at, attempt_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+      (event_id, sink_id, raw_body_b64, headers, provider, failed_at, attempt_count, failure_reason)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     eventId,
     sinkId,
@@ -36,24 +36,31 @@ async function writeToDLQ(eventId, sinkId, provider, rawBodyB64, headers, attemp
     JSON.stringify(headers || {}),
     provider || null,
     failedAt,
-    attemptCount
+    attemptCount,
+    failureReason || null
   );
 
-  // Secondary: publish to NATS DLQ stream for durable cross-process visibility (best-effort)
+  // Publish to NATS DLQ stream (primary store for list endpoint).
+  // Store the returned stream sequence in SQLite so the redrive endpoint can
+  // delete this specific message from the stream later.
   try {
-    await natsLib.publishToDLQ(sinkId, {
+    const pubAck = await natsLib.publishToDLQ(sinkId, {
       event_id: eventId,
       sink_id: sinkId,
       payload: rawBodyB64 || '',
       headers: headers || {},
       failed_at: failedAt,
       attempt_count: attemptCount,
+      failure_reason: failureReason || null,
     });
+    if (pubAck && pubAck.seq) {
+      db.prepare('UPDATE dlq_entries SET nats_seq = ? WHERE event_id = ?').run(pubAck.seq, eventId);
+    }
   } catch (_) {
-    // NATS DLQ publish failure is non-fatal — SQLite is the source of truth
+    // NATS DLQ publish failure is non-fatal — redrive still works via SQLite
   }
 
-  console.warn(`[delivery] Event ${eventId} written to DLQ (${attemptCount} attempts)`);
+  console.warn(`[delivery] Event ${eventId} written to DLQ (${attemptCount} attempts, reason: ${failureReason})`);
 }
 
 async function processMessage(msg) {
@@ -88,7 +95,7 @@ async function processMessage(msg) {
   if (routes.length === 0) {
     db.prepare('UPDATE events SET status = ? WHERE id = ?').run('failed', eventId);
     console.warn(`[delivery] No routes for sink ${sinkId} — marking failed, writing to DLQ`);
-    await writeToDLQ(eventId, sinkId, event.provider, rawBodyB64, headers, deliveryCount);
+    await writeToDLQ(eventId, sinkId, event.provider, rawBodyB64, headers, deliveryCount, 'no_routes');
     msg.ack();
     return;
   }
@@ -128,7 +135,7 @@ async function processMessage(msg) {
     // All JetStream redeliveries exhausted — write to DLQ before final ack.
     db.prepare('UPDATE events SET status = ? WHERE id = ?').run('failed', eventId);
     console.warn(`[delivery] Event ${eventId} exhausted ${natsLib.MAX_DELIVER} attempts — writing to DLQ, acking`);
-    await writeToDLQ(eventId, sinkId, event.provider, rawBodyB64, headers, deliveryCount);
+    await writeToDLQ(eventId, sinkId, event.provider, rawBodyB64, headers, deliveryCount, 'max_deliver_exceeded');
     msg.ack();
   } else {
     // Transient failure — reset event to 'pending' so the UI does not show a

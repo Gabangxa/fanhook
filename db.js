@@ -56,6 +56,8 @@ db.exec(`
     provider TEXT,
     failed_at TEXT NOT NULL,
     attempt_count INTEGER NOT NULL DEFAULT 3,
+    failure_reason TEXT,
+    nats_seq INTEGER,
     redriven INTEGER NOT NULL DEFAULT 0,
     redriven_at TEXT,
     new_event_id TEXT
@@ -68,6 +70,8 @@ for (const col of [
   "ALTER TABLE sinks ADD COLUMN tier TEXT NOT NULL DEFAULT 'free'",
   'ALTER TABLE sinks ADD COLUMN stripe_customer_id TEXT',
   'ALTER TABLE sinks ADD COLUMN stripe_subscription_id TEXT',
+  'ALTER TABLE dlq_entries ADD COLUMN failure_reason TEXT',
+  'ALTER TABLE dlq_entries ADD COLUMN nats_seq INTEGER',
 ]) {
   try { db.exec(col); } catch (_) { /* column already exists */ }
 }
@@ -149,30 +153,6 @@ if (!existingSink) {
     );
   }
 
-}
-
-// Always upsert the demo DLQ entry so the dashboard DLQ section is visible after each restart.
-// Resets redriven=0 each startup to keep the demo experience consistent.
-{
-  const demoPayload = JSON.stringify({ type: 'payment_intent.succeeded', id: 'evt_demo_event_3' });
-  const dlqNow = new Date().toISOString();
-  db.prepare(`
-    INSERT INTO dlq_entries (event_id, sink_id, raw_body_b64, headers, provider, failed_at, attempt_count, redriven, redriven_at, new_event_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL)
-    ON CONFLICT(event_id) DO UPDATE SET
-      redriven = 0,
-      redriven_at = NULL,
-      new_event_id = NULL,
-      failed_at = excluded.failed_at
-  `).run(
-    'demo_event_3',
-    'demo_sink_1',
-    Buffer.from(demoPayload).toString('base64'),
-    JSON.stringify({ 'content-type': 'application/json' }),
-    'stripe',
-    dlqNow,
-    3
-  );
 }
 
 module.exports = db;
