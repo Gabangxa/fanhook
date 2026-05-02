@@ -160,31 +160,57 @@ router.delete('/sinks/:sinkId/routes/:routeId', requireSinkAuth, (req, res) => {
 // GET /api/sinks/:sinkId/dlq — list last 50 DLQ entries for a sink
 //
 // Primary: uses JetStream OrderedConsumer to read from webhook.dlq.<sinkId>.
-// Fallback: reads from SQLite dlq_entries table when NATS is unavailable.
+// Always merges in SQLite-only entries (nats_seq IS NULL) so that events whose
+// NATS publish failed at failure-time still appear in the list.
+// Full SQLite fallback when NATS is unavailable.
 // ---------------------------------------------------------------------------
 router.get('/sinks/:sinkId/dlq', requireSinkAuth, async (req, res) => {
   const { sinkId } = req.params;
 
-  // Try NATS JetStream first (authoritative DLQ store)
-  try {
-    const msgs = await natsLib.listDLQMessages(sinkId, 50);
-    return res.json(msgs);
-  } catch (_) {
-    // NATS unavailable — fall back to SQLite
-  }
-
-  // SQLite fallback: entries written by the delivery worker when NATS was reachable
-  // but before they were published to the stream (or entries from direct-fanout mode).
-  const entries = db
+  // SQLite-only entries: DLQ rows where publishToDLQ failed (nats_seq IS NULL).
+  // These never made it to NATS so they won't appear in the JetStream results.
+  const sqliteOnlyEntries = db
     .prepare(
       `SELECT event_id, sink_id, provider, failed_at, attempt_count, failure_reason,
               headers, nats_seq
        FROM dlq_entries
-       WHERE sink_id = ? AND redriven = 0
+       WHERE sink_id = ? AND redriven = 0 AND nats_seq IS NULL
        ORDER BY failed_at DESC LIMIT 50`
     )
     .all(sinkId);
-  return res.json(entries);
+
+  // Try NATS JetStream OrderedConsumer (authoritative for entries that were published)
+  let natsEntries = null;
+  try {
+    natsEntries = await natsLib.listDLQMessages(sinkId, 50);
+  } catch (_) {
+    // NATS unavailable — full SQLite fallback below
+  }
+
+  if (natsEntries === null) {
+    // Full SQLite fallback when NATS is down
+    const allSqlite = db
+      .prepare(
+        `SELECT event_id, sink_id, provider, failed_at, attempt_count, failure_reason,
+                headers, nats_seq
+         FROM dlq_entries
+         WHERE sink_id = ? AND redriven = 0
+         ORDER BY failed_at DESC LIMIT 50`
+      )
+      .all(sinkId);
+    return res.json(allSqlite);
+  }
+
+  // NATS is available — merge NATS results with SQLite-only entries.
+  // Deduplicate by event_id (NATS result takes precedence as it has _nats_seq),
+  // then sort newest-first and cap at 50.
+  const natsEventIds = new Set(natsEntries.map(e => e.event_id));
+  const merged = [
+    ...natsEntries,
+    ...sqliteOnlyEntries.filter(e => !natsEventIds.has(e.event_id)),
+  ];
+  merged.sort((a, b) => (a.failed_at < b.failed_at ? 1 : -1));
+  return res.json(merged.slice(0, 50));
 });
 
 // ---------------------------------------------------------------------------
