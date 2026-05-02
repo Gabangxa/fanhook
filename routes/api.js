@@ -2,6 +2,8 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { getMonthlyEventCount, getEventLimit } = require('../lib/metering');
+const { fanout } = require('../lib/fanout');
+const natsLib = require('../lib/nats');
 
 const router = express.Router();
 
@@ -152,6 +154,82 @@ router.delete('/sinks/:sinkId/routes/:routeId', requireSinkAuth, (req, res) => {
 
   db.prepare('DELETE FROM routes WHERE id = ?').run(req.params.routeId);
   return res.status(204).send();
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/sinks/:sinkId/dlq — list last 50 undriven DLQ entries for a sink
+// ---------------------------------------------------------------------------
+router.get('/sinks/:sinkId/dlq', requireSinkAuth, (req, res) => {
+  const entries = db
+    .prepare(
+      `SELECT * FROM dlq_entries
+       WHERE sink_id = ? AND redriven = 0
+       ORDER BY failed_at DESC LIMIT 50`
+    )
+    .all(req.params.sinkId);
+  return res.json(entries);
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/sinks/:sinkId/dlq/:eventId/redrive — redrive a DLQ entry
+// ---------------------------------------------------------------------------
+router.post('/sinks/:sinkId/dlq/:eventId/redrive', requireSinkAuth, async (req, res) => {
+  const { sinkId, eventId } = req.params;
+
+  const entry = db
+    .prepare('SELECT * FROM dlq_entries WHERE event_id = ? AND sink_id = ?')
+    .get(eventId, sinkId);
+
+  if (!entry) {
+    return res.status(404).json({ error: 'DLQ entry not found' });
+  }
+
+  if (entry.redriven) {
+    return res.status(409).json({ error: 'Entry has already been redriven', new_event_id: entry.new_event_id });
+  }
+
+  const sink = db.prepare('SELECT * FROM sinks WHERE id = ?').get(sinkId);
+  if (!sink) {
+    return res.status(404).json({ error: 'Sink not found' });
+  }
+
+  const newEventId = uuidv4();
+  const receivedAt = new Date().toISOString();
+  const rawBody = Buffer.from(entry.raw_body_b64 || '', 'base64');
+  let originalHeaders = {};
+  try { originalHeaders = JSON.parse(entry.headers || '{}'); } catch (_) {}
+  const payload = rawBody.toString('utf8') || '{}';
+
+  // Create a fresh event record so the redriven delivery appears in the event log
+  db.prepare(`
+    INSERT INTO events (id, sink_id, provider, payload, received_at, status)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(newEventId, sinkId, entry.provider || sink.provider, payload, receivedAt, 'pending');
+
+  // Mark DLQ entry as redriven immediately so a double-click can't fire twice
+  db.prepare(
+    'UPDATE dlq_entries SET redriven = 1, redriven_at = ?, new_event_id = ? WHERE event_id = ?'
+  ).run(receivedAt, newEventId, eventId);
+
+  // Dispatch the redriven event via NATS (preferred) or direct fanout (fallback)
+  const routes = db.prepare('SELECT * FROM routes WHERE sink_id = ?').all(sinkId);
+  if (routes.length > 0) {
+    try {
+      await natsLib.publish(sinkId, {
+        eventId: newEventId,
+        sinkId,
+        rawBodyB64: entry.raw_body_b64 || '',
+        headers: originalHeaders,
+      });
+    } catch (_) {
+      // NATS unavailable — fall back to in-process fanout
+      fanout(db, newEventId, routes, rawBody, originalHeaders).catch(() => {});
+    }
+  } else {
+    db.prepare('UPDATE events SET status = ? WHERE id = ?').run('failed', newEventId);
+  }
+
+  return res.json({ redriven: true, new_event_id: newEventId });
 });
 
 // ---------------------------------------------------------------------------

@@ -449,6 +449,25 @@ ${NAV}
       </table>
     </div>
   </section>
+
+  <section class="fade-in fade-in-d4" id="dlq-section" style="margin-bottom:3rem;display:none;">
+    <div class="dash-section-header">
+      <div class="dash-section-icon" style="background:rgba(239,68,68,0.1);color:var(--red);">&#9760;</div>
+      <h2>Dead Letter Queue <span id="dlq-count-badge" style="display:none;margin-left:0.5rem;padding:0.1rem 0.55rem;border-radius:999px;font-size:0.75rem;font-weight:700;background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.25);"></span></h2>
+    </div>
+    <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1rem;">
+      Events that exhausted all delivery attempts. Fix the downstream issue, then click <strong style="color:var(--text-primary);">Redrive</strong> to retry with a fresh delivery cycle.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Event ID</th><th>Provider</th><th>Failed At</th><th>Attempts</th><th>Action</th></tr>
+        </thead>
+        <tbody id="dlq-body"></tbody>
+      </table>
+    </div>
+    <p id="dlq-msg" style="display:none;font-size:0.9rem;margin-top:0.5rem;"></p>
+  </section>
 </div>
 
 ${FOOTER}
@@ -656,10 +675,75 @@ ${FOOTER}
     }
   }
 
+  async function loadDLQ() {
+    try {
+      const res = await fetch('/api/sinks/' + SINK_ID + '/dlq', { headers });
+      if (!res.ok) return;
+      const entries = await res.json();
+      if (!entries || entries.length === 0) return;
+
+      const badge = document.getElementById('dlq-count-badge');
+      badge.textContent = entries.length;
+      badge.style.display = 'inline';
+
+      const tbody = document.getElementById('dlq-body');
+      tbody.innerHTML = entries.map(e =>
+        '<tr id="dlq-row-' + esc(e.event_id) + '">' +
+        '<td><code style="font-size:.8rem;">' + esc(e.event_id) + '</code></td>' +
+        '<td style="color:var(--text-muted);">' + esc(e.provider || 'generic') + '</td>' +
+        '<td style="font-size:.8rem;color:var(--text-muted);">' + esc(e.failed_at) + '</td>' +
+        '<td style="color:var(--red);font-weight:600;">' + esc(e.attempt_count) + '</td>' +
+        '<td><button id="redrive-btn-' + esc(e.event_id) + '" onclick="redrive(\'' + esc(e.event_id) + '\')" style="background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.25);">Redrive</button></td>' +
+        '</tr>'
+      ).join('');
+
+      document.getElementById('dlq-section').style.display = 'block';
+    } catch (_) {}
+  }
+
+  async function redrive(eventId) {
+    const btn = document.getElementById('redrive-btn-' + eventId);
+    if (btn) { btn.textContent = 'Redriving\u2026'; btn.disabled = true; btn.style.opacity = '.6'; }
+    const msgEl = document.getElementById('dlq-msg');
+    try {
+      const res = await fetch(
+        '/api/sinks/' + SINK_ID + '/dlq/' + eventId + '/redrive',
+        { method: 'POST', headers }
+      );
+      const data = await res.json();
+      if (res.ok && data.redriven) {
+        const row = document.getElementById('dlq-row-' + eventId);
+        if (row) row.remove();
+        const badge = document.getElementById('dlq-count-badge');
+        const remaining = document.querySelectorAll('#dlq-body tr').length;
+        if (remaining === 0) {
+          document.getElementById('dlq-section').style.display = 'none';
+        } else {
+          badge.textContent = remaining;
+        }
+        msgEl.textContent = 'Redriven! New event ID: ' + data.new_event_id + '. Refreshing event log\u2026';
+        msgEl.style.color = 'var(--green)';
+        msgEl.style.display = 'block';
+        setTimeout(() => { loadEvents(); }, 800);
+      } else {
+        if (btn) { btn.textContent = 'Redrive'; btn.disabled = false; btn.style.opacity = '1'; }
+        msgEl.textContent = 'Error: ' + (data.error || 'Unknown error');
+        msgEl.style.color = 'var(--red)';
+        msgEl.style.display = 'block';
+      }
+    } catch (err) {
+      if (btn) { btn.textContent = 'Redrive'; btn.disabled = false; btn.style.opacity = '1'; }
+      msgEl.textContent = 'Error: ' + err.message;
+      msgEl.style.color = 'var(--red)';
+      msgEl.style.display = 'block';
+    }
+  }
+
   loadBilling();
   loadSinks();
   loadRoutes();
   loadEvents();
+  loadDLQ();
 </script>
 </body></html>`;
   res.setHeader('Content-Type', 'text/html');

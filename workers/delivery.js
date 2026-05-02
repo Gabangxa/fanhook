@@ -8,7 +8,7 @@
  *   1. Decodes rawBodyB64 + headers from the NATS message payload
  *   2. Fans out to all destination URLs in parallel (via lib/fanout.js)
  *   3. Acks on success; naks with 30 s delay on failure so JetStream redelivers
- *   4. On final exhaustion (deliveryCount >= MAX_DELIVER): marks event failed, acks
+ *   4. On final exhaustion (deliveryCount >= MAX_DELIVER): writes to DLQ, marks event failed, acks
  *
  * Can run as a forked child process (spawned by server.js) or standalone:
  *   node workers/delivery.js
@@ -20,6 +20,41 @@ const { fanout } = require(path.join(__dirname, '..', 'lib', 'fanout'));
 const natsLib = require(path.join(__dirname, '..', 'lib', 'nats'));
 
 const NAK_DELAY_MS = 30_000;
+
+async function writeToDLQ(eventId, sinkId, provider, rawBodyB64, headers, attemptCount) {
+  const failedAt = new Date().toISOString();
+
+  // Primary: write to SQLite (always available, survives NATS restart)
+  db.prepare(`
+    INSERT OR IGNORE INTO dlq_entries
+      (event_id, sink_id, raw_body_b64, headers, provider, failed_at, attempt_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    eventId,
+    sinkId,
+    rawBodyB64 || '',
+    JSON.stringify(headers || {}),
+    provider || null,
+    failedAt,
+    attemptCount
+  );
+
+  // Secondary: publish to NATS DLQ stream for durable cross-process visibility (best-effort)
+  try {
+    await natsLib.publishToDLQ(sinkId, {
+      event_id: eventId,
+      sink_id: sinkId,
+      payload: rawBodyB64 || '',
+      headers: headers || {},
+      failed_at: failedAt,
+      attempt_count: attemptCount,
+    });
+  } catch (_) {
+    // NATS DLQ publish failure is non-fatal — SQLite is the source of truth
+  }
+
+  console.warn(`[delivery] Event ${eventId} written to DLQ (${attemptCount} attempts)`);
+}
 
 async function processMessage(msg) {
   let data;
@@ -52,7 +87,8 @@ async function processMessage(msg) {
   const routes = db.prepare('SELECT * FROM routes WHERE sink_id = ?').all(sinkId);
   if (routes.length === 0) {
     db.prepare('UPDATE events SET status = ? WHERE id = ?').run('failed', eventId);
-    console.warn(`[delivery] No routes for sink ${sinkId} — marking failed`);
+    console.warn(`[delivery] No routes for sink ${sinkId} — marking failed, writing to DLQ`);
+    await writeToDLQ(eventId, sinkId, event.provider, rawBodyB64, headers, deliveryCount);
     msg.ack();
     return;
   }
@@ -89,9 +125,10 @@ async function processMessage(msg) {
     console.log(`[delivery] Event ${eventId} delivered — acking`);
     msg.ack();
   } else if (deliveryCount >= natsLib.MAX_DELIVER) {
-    // All JetStream redeliveries exhausted — this is truly a final failure.
+    // All JetStream redeliveries exhausted — write to DLQ before final ack.
     db.prepare('UPDATE events SET status = ? WHERE id = ?').run('failed', eventId);
-    console.warn(`[delivery] Event ${eventId} exhausted ${natsLib.MAX_DELIVER} attempts — marking failed, acking`);
+    console.warn(`[delivery] Event ${eventId} exhausted ${natsLib.MAX_DELIVER} attempts — writing to DLQ, acking`);
+    await writeToDLQ(eventId, sinkId, event.provider, rawBodyB64, headers, deliveryCount);
     msg.ack();
   } else {
     // Transient failure — reset event to 'pending' so the UI does not show a

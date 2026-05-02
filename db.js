@@ -47,6 +47,19 @@ db.exec(`
     attempted_at TEXT NOT NULL,
     FOREIGN KEY (event_id) REFERENCES events(id)
   );
+
+  CREATE TABLE IF NOT EXISTS dlq_entries (
+    event_id TEXT PRIMARY KEY,
+    sink_id TEXT NOT NULL,
+    raw_body_b64 TEXT NOT NULL,
+    headers TEXT NOT NULL,
+    provider TEXT,
+    failed_at TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 3,
+    redriven INTEGER NOT NULL DEFAULT 0,
+    redriven_at TEXT,
+    new_event_id TEXT
+  );
 `);
 
 // Idempotent migrations — safe to run on every startup
@@ -135,6 +148,31 @@ if (!existingSink) {
       now
     );
   }
+
+}
+
+// Always upsert the demo DLQ entry so the dashboard DLQ section is visible after each restart.
+// Resets redriven=0 each startup to keep the demo experience consistent.
+{
+  const demoPayload = JSON.stringify({ type: 'payment_intent.succeeded', id: 'evt_demo_event_3' });
+  const dlqNow = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO dlq_entries (event_id, sink_id, raw_body_b64, headers, provider, failed_at, attempt_count, redriven, redriven_at, new_event_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL)
+    ON CONFLICT(event_id) DO UPDATE SET
+      redriven = 0,
+      redriven_at = NULL,
+      new_event_id = NULL,
+      failed_at = excluded.failed_at
+  `).run(
+    'demo_event_3',
+    'demo_sink_1',
+    Buffer.from(demoPayload).toString('base64'),
+    JSON.stringify({ 'content-type': 'application/json' }),
+    'stripe',
+    dlqNow,
+    3
+  );
 }
 
 module.exports = db;
