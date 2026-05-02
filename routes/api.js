@@ -329,36 +329,35 @@ router.get('/sinks/:sinkId/stream', async (req, res) => {
     return res.status(403).json({ error: 'Forbidden: sink does not belong to this API key' });
   }
 
-  // Set SSE headers and flush immediately so the browser establishes the stream
+  // Connect to NATS BEFORE flushing headers — once flushHeaders() is called
+  // the status code is locked. If NATS is down we can still send a clean 503.
+  let sub;
+  try {
+    const nc = await natsLib.getConnection();
+    sub = nc.subscribe(`events.status.${sinkId}`);
+  } catch (_) {
+    // NATS unavailable — 503 so EventSource.onerror fires → client falls back to polling
+    return res.status(503).json({ error: 'NATS unavailable' });
+  }
+
+  // Commit SSE headers and start the stream
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('X-Accel-Buffering', 'no');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  // Subscribe to NATS core subject — no persistence, just live fan-in
-  let sub;
-  try {
-    const nc = await natsLib.getConnection();
-    sub = nc.subscribe(`events.status.${sinkId}`);
-
-    // Forward each NATS message as an SSE data frame
-    (async () => {
-      try {
-        for await (const msg of sub) {
-          const data = natsLib.jc.decode(msg.data);
-          res.write(`data: ${JSON.stringify(data)}\n\n`);
-        }
-      } catch (_) {
-        // Subscription closed — normal on disconnect
+  // Forward each NATS message as an SSE data frame
+  (async () => {
+    try {
+      for await (const msg of sub) {
+        const data = natsLib.jc.decode(msg.data);
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
       }
-    })();
-  } catch (_) {
-    // NATS unavailable — client's EventSource.onerror fires and falls back to polling
-    res.write(`event: error\ndata: {"error":"NATS unavailable"}\n\n`);
-    res.end();
-    return;
-  }
+    } catch (_) {
+      // Subscription closed — normal on client disconnect
+    }
+  })();
 
   // Keepalive ping every 25 seconds to survive proxy idle timeouts
   const pingInterval = setInterval(() => {

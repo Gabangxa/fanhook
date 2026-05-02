@@ -72,6 +72,12 @@ router.post('/:sinkId', async (req, res) => {
 
   if (routes.length === 0) {
     db.prepare('UPDATE events SET status = ? WHERE id = ?').run('failed', eventId);
+    // Publish final status so SSE subscribers don't stay stuck on 'pending'
+    natsLib.publishStatusEvent(sinkId, {
+      event_id: eventId,
+      sink_id: sinkId,
+      status: 'failed',
+    }).catch(() => {});
     return res.status(200).json({ received: true, routed: 0 });
   }
 
