@@ -66,6 +66,14 @@ async function processMessage(msg) {
   // Use the original request headers from the NATS message for exact fidelity.
   const forwardHeaders = headers || {};
 
+  // Send periodic in-progress signals to JetStream so it does not redeliver
+  // while fanout is still running. Worst-case fanout duration is ~150 s
+  // (3 routes × in-process retries with 0s + 30s + 120s delays). Calling
+  // msg.working() every 20 s resets the server-side ack_wait timer.
+  const workingInterval = setInterval(() => {
+    try { msg.working(); } catch (_) {}
+  }, 20_000);
+
   let succeeded = false;
   try {
     await fanout(db, eventId, routes, rawBody, forwardHeaders);
@@ -73,17 +81,23 @@ async function processMessage(msg) {
     succeeded = updated && updated.status === 'delivered';
   } catch (err) {
     console.error(`[delivery] fanout error for event ${eventId}:`, err.message);
+  } finally {
+    clearInterval(workingInterval);
   }
 
   if (succeeded) {
     console.log(`[delivery] Event ${eventId} delivered — acking`);
     msg.ack();
   } else if (deliveryCount >= natsLib.MAX_DELIVER) {
+    // All JetStream redeliveries exhausted — this is truly a final failure.
     db.prepare('UPDATE events SET status = ? WHERE id = ?').run('failed', eventId);
     console.warn(`[delivery] Event ${eventId} exhausted ${natsLib.MAX_DELIVER} attempts — marking failed, acking`);
     msg.ack();
   } else {
-    console.log(`[delivery] Event ${eventId} failed — naking for redelivery in ${NAK_DELAY_MS / 1000}s`);
+    // Transient failure — reset event to 'pending' so the UI does not show a
+    // false permanent failure while JetStream redelivery is in progress.
+    db.prepare('UPDATE events SET status = ? WHERE id = ?').run('pending', eventId);
+    console.log(`[delivery] Event ${eventId} failed — resetting to pending, naking for redelivery in ${NAK_DELAY_MS / 1000}s`);
     msg.nak(NAK_DELAY_MS);
   }
 }
