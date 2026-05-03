@@ -155,6 +155,25 @@ function githubSig(rawBody, secret) {
   const h = crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex');
   return `sha256=${h}`;
 }
+function shopifySig(rawBody, secret) {
+  return crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64');
+}
+function linearSig(rawBody, secret) {
+  return crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex');
+}
+function pagerdutySig(rawBody, secret) {
+  const h = crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex');
+  return `v1=${h}`;
+}
+function clerkSig(rawBody, secret, id, ts) {
+  // Mirror lib/verify.js: if secret begins with "whsec_", base64-decode the rest.
+  const key = secret.startsWith('whsec_')
+    ? Buffer.from(secret.slice('whsec_'.length), 'base64')
+    : Buffer.from(secret, 'utf8');
+  const signed = `${id}.${ts}.${rawBody}`;
+  const sig = crypto.createHmac('sha256', key).update(signed, 'utf8').digest('base64');
+  return `v1,${sig}`;
+}
 
 // ---------------------------------------------------------------------------
 // Test groups
@@ -476,6 +495,140 @@ async function group5_signatures() {
     assertEq(r.status, 200, 'status');
     const evt = db.prepare('SELECT status FROM events WHERE sink_id = ?').get(a.sink_id);
     assert(evt, 'event row exists');
+  });
+
+  // ---- Shopify ----
+  await tc('TC-5.6', 'Valid Shopify signature → 200', async () => {
+    const secret = 'shopify_test_5_6';
+    const a = await createSink({ name: 'tc-5-6', provider: 'shopify', webhook_secret: secret });
+    await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: `${targetBase}/ok` },
+    });
+    const payload = JSON.stringify({ id: 12345, total: '9.99' });
+    const r = await req('POST', `/ingest/${a.sink_id}`, {
+      headers: { 'content-type': 'application/json', 'x-shopify-hmac-sha256': shopifySig(payload, secret) },
+      body: payload, raw: true,
+    });
+    assertEq(r.status, 200, 'status');
+  });
+
+  await tc('TC-5.7', 'Tampered Shopify payload → 401', async () => {
+    const secret = 'shopify_test_5_7';
+    const a = await createSink({ name: 'tc-5-7', provider: 'shopify', webhook_secret: secret });
+    const goodPayload = JSON.stringify({ id: 1 });
+    const sig = shopifySig(goodPayload, secret);
+    const tampered = JSON.stringify({ id: 2 });
+    const r = await req('POST', `/ingest/${a.sink_id}`, {
+      headers: { 'content-type': 'application/json', 'x-shopify-hmac-sha256': sig },
+      body: tampered, raw: true,
+    });
+    assertEq(r.status, 401, 'status');
+    const evt = db.prepare('SELECT COUNT(*) AS c FROM events WHERE sink_id = ?').get(a.sink_id);
+    assertEq(evt.c, 0, 'no event stored');
+  });
+
+  // ---- Linear ----
+  await tc('TC-5.8', 'Valid Linear signature → 200', async () => {
+    const secret = 'linear_test_5_8';
+    const a = await createSink({ name: 'tc-5-8', provider: 'linear', webhook_secret: secret });
+    await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: `${targetBase}/ok` },
+    });
+    const payload = JSON.stringify({ action: 'create', type: 'Issue' });
+    const r = await req('POST', `/ingest/${a.sink_id}`, {
+      headers: { 'content-type': 'application/json', 'linear-signature': linearSig(payload, secret) },
+      body: payload, raw: true,
+    });
+    assertEq(r.status, 200, 'status');
+  });
+
+  await tc('TC-5.9', 'Tampered Linear payload → 401', async () => {
+    const secret = 'linear_test_5_9';
+    const a = await createSink({ name: 'tc-5-9', provider: 'linear', webhook_secret: secret });
+    const goodPayload = JSON.stringify({ action: 'create' });
+    const sig = linearSig(goodPayload, secret);
+    const tampered = JSON.stringify({ action: 'delete' });
+    const r = await req('POST', `/ingest/${a.sink_id}`, {
+      headers: { 'content-type': 'application/json', 'linear-signature': sig },
+      body: tampered, raw: true,
+    });
+    assertEq(r.status, 401, 'status');
+    const evt = db.prepare('SELECT COUNT(*) AS c FROM events WHERE sink_id = ?').get(a.sink_id);
+    assertEq(evt.c, 0, 'no event stored');
+  });
+
+  // ---- PagerDuty ----
+  await tc('TC-5.10', 'Valid PagerDuty signature → 200', async () => {
+    const secret = 'pagerduty_test_5_10';
+    const a = await createSink({ name: 'tc-5-10', provider: 'pagerduty', webhook_secret: secret });
+    await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: `${targetBase}/ok` },
+    });
+    const payload = JSON.stringify({ event: { event_type: 'incident.triggered' } });
+    const r = await req('POST', `/ingest/${a.sink_id}`, {
+      headers: { 'content-type': 'application/json', 'x-pagerduty-signature': pagerdutySig(payload, secret) },
+      body: payload, raw: true,
+    });
+    assertEq(r.status, 200, 'status');
+  });
+
+  await tc('TC-5.11', 'Tampered PagerDuty payload → 401', async () => {
+    const secret = 'pagerduty_test_5_11';
+    const a = await createSink({ name: 'tc-5-11', provider: 'pagerduty', webhook_secret: secret });
+    const goodPayload = JSON.stringify({ event: { event_type: 'incident.triggered' } });
+    const sig = pagerdutySig(goodPayload, secret);
+    const tampered = JSON.stringify({ event: { event_type: 'incident.resolved' } });
+    const r = await req('POST', `/ingest/${a.sink_id}`, {
+      headers: { 'content-type': 'application/json', 'x-pagerduty-signature': sig },
+      body: tampered, raw: true,
+    });
+    assertEq(r.status, 401, 'status');
+    const evt = db.prepare('SELECT COUNT(*) AS c FROM events WHERE sink_id = ?').get(a.sink_id);
+    assertEq(evt.c, 0, 'no event stored');
+  });
+
+  // ---- Clerk (Svix) ----
+  await tc('TC-5.12', 'Valid Clerk (Svix) signature → 200', async () => {
+    // Use a valid base64 secret so the whsec_ prefix decode path is exercised.
+    const rawSecretBytes = crypto.randomBytes(24);
+    const secret = `whsec_${rawSecretBytes.toString('base64')}`;
+    const a = await createSink({ name: 'tc-5-12', provider: 'clerk', webhook_secret: secret });
+    await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: `${targetBase}/ok` },
+    });
+    const payload = JSON.stringify({ type: 'user.created', data: { id: 'u_1' } });
+    const id = 'msg_2abcdef';
+    const ts = String(Math.floor(Date.now() / 1000));
+    const sig = clerkSig(payload, secret, id, ts);
+    const r = await req('POST', `/ingest/${a.sink_id}`, {
+      headers: {
+        'content-type': 'application/json',
+        'svix-id': id, 'svix-timestamp': ts, 'svix-signature': sig,
+      },
+      body: payload, raw: true,
+    });
+    assertEq(r.status, 200, 'status');
+  });
+
+  await tc('TC-5.13', 'Tampered Clerk (Svix) payload → 401', async () => {
+    const rawSecretBytes = crypto.randomBytes(24);
+    const secret = `whsec_${rawSecretBytes.toString('base64')}`;
+    const a = await createSink({ name: 'tc-5-13', provider: 'clerk', webhook_secret: secret });
+    const id = 'msg_3abcdef';
+    const ts = String(Math.floor(Date.now() / 1000));
+    const goodPayload = JSON.stringify({ type: 'user.created' });
+    const sig = clerkSig(goodPayload, secret, id, ts);
+    const tampered = JSON.stringify({ type: 'user.deleted' });
+    const r = await req('POST', `/ingest/${a.sink_id}`, {
+      headers: {
+        'content-type': 'application/json',
+        'svix-id': id, 'svix-timestamp': ts, 'svix-signature': sig,
+      },
+      body: tampered, raw: true,
+    });
+    assertEq(r.status, 401, 'status');
+    const evt = db.prepare('SELECT COUNT(*) AS c FROM events WHERE sink_id = ?').get(a.sink_id);
+    assertEq(evt.c, 0, 'no event stored');
   });
 }
 

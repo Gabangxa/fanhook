@@ -23,7 +23,7 @@ When `NATS_URL` is absent, the app falls back to the legacy in-process fire-and-
 - `routes/web.js` — Server-rendered HTML pages (home, dashboard, docs)
 - `lib/nats.js` — NATS JetStream client singleton; stream + consumer setup
 - `lib/fanout.js` — Parallel delivery to all routes with per-route retry logic
-- `lib/verify.js` — HMAC signature verification for Stripe and GitHub
+- `lib/verify.js` — HMAC signature verification for Stripe, GitHub, Shopify, Linear, PagerDuty (v3), and Clerk (Svix); per-provider landing pages live at `/providers/:slug` (see `routes/web.js` `PROVIDER_PAGES`).
 - `lib/metering.js` — Monthly event counting and tier limits
 - `workers/delivery.js` — Durable NATS delivery worker; ack/nak with JetStream redelivery
 - `public/style.css` — Creative dark theme with glassmorphism, gradient accents, Inter/JetBrains Mono fonts

@@ -51,12 +51,13 @@ router.post('/sinks', (req, res) => {
     return res.status(400).json({ error: 'name is required' });
   }
 
-  const VALID_PROVIDERS = ['stripe', 'github', 'generic'];
+  const VALID_PROVIDERS = ['stripe', 'github', 'shopify', 'linear', 'pagerduty', 'clerk', 'generic'];
   if (!VALID_PROVIDERS.includes(provider)) {
     return res.status(400).json({ error: `provider must be one of: ${VALID_PROVIDERS.join(', ')}` });
   }
 
-  if ((provider === 'stripe' || provider === 'github') && !webhook_secret) {
+  const SECRET_REQUIRED = new Set(['stripe', 'github', 'shopify', 'linear', 'pagerduty', 'clerk']);
+  if (SECRET_REQUIRED.has(provider) && !webhook_secret) {
     return res.status(400).json({ error: `webhook_secret is required for provider '${provider}'` });
   }
 

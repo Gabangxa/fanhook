@@ -76,7 +76,18 @@ function toggleTheme(){
 })();
 </script>`;
 
-const FOOTER = `<footer class="footer">FanHook &mdash; Built for indie developers &amp; small teams</footer>`;
+const FOOTER = `<footer class="footer">
+  <div style="display:flex;justify-content:center;gap:1rem;flex-wrap:wrap;margin-bottom:0.6rem;font-size:0.85rem;">
+    <a href="/providers/stripe" style="color:inherit;opacity:0.75;">Stripe</a>
+    <a href="/providers/github" style="color:inherit;opacity:0.75;">GitHub</a>
+    <a href="/providers/shopify" style="color:inherit;opacity:0.75;">Shopify</a>
+    <a href="/providers/linear" style="color:inherit;opacity:0.75;">Linear</a>
+    <a href="/providers/pagerduty" style="color:inherit;opacity:0.75;">PagerDuty</a>
+    <a href="/providers/clerk" style="color:inherit;opacity:0.75;">Clerk</a>
+    <a href="/docs" style="color:inherit;opacity:0.75;">Docs</a>
+  </div>
+  FanHook &mdash; Built for indie developers &amp; small teams
+</footer>`;
 
 // ---------- Health & OpenAPI ----------
 router.get('/health', (req, res) => {
@@ -267,7 +278,7 @@ router.get('/docs', (req, res) => {
         <div><span class="method method-post">POST</span></div>
         <div>
           <div class="endpoint-path">/api/sinks <span class="endpoint-auth">Bearer</span></div>
-          <div class="endpoint-desc">Create a new sink. Body: <code>{"name":"...","provider":"stripe|github|generic"}</code></div>
+          <div class="endpoint-desc">Create a new sink. Body: <code>{"name":"...","provider":"stripe|github|shopify|linear|pagerduty|clerk|generic"}</code>. All non-generic providers require <code>webhook_secret</code>. See per-provider setup at <a href="/providers/shopify">/providers/shopify</a>, <a href="/providers/linear">/providers/linear</a>, <a href="/providers/pagerduty">/providers/pagerduty</a>, <a href="/providers/clerk">/providers/clerk</a>.</div>
         </div>
       </div>
       <div class="endpoint">
@@ -352,6 +363,171 @@ ${THEME_SCRIPT}
   res.send(html);
 });
 
+// ---------- Per-provider landing pages (SEO) ----------
+const PROVIDER_PAGES = {
+  stripe: {
+    name: 'Stripe',
+    headline: 'FanHook for Stripe Webhooks',
+    description: 'Verify Stripe webhook signatures and fan out payment events to Slack, your database, and any other endpoint — without writing the boilerplate.',
+    intro1: 'Stripe ships your most business-critical events — successful charges, failed subscriptions, disputes — over webhooks. FanHook verifies every Stripe-Signature header against your endpoint secret, stores the event, and forwards it to every destination you configure.',
+    intro2: 'Bring up a Stripe sink in seconds, paste your <code>whsec_...</code> secret, and point Stripe at the FanHook ingest URL. We handle retries, deduplication, and a tamper-proof audit log so you can stop babysitting raw webhook handlers.',
+    secretLabel: 'Endpoint signing secret (whsec_...)',
+    setupSteps: [
+      'Create a Stripe sink in your FanHook dashboard and paste the endpoint signing secret from the Stripe dashboard.',
+      'In Stripe → Developers → Webhooks, add a new endpoint pointing at the ingest URL below.',
+      'Add fanout routes (Slack, your API, your data warehouse) and FanHook will broadcast every verified event.',
+    ],
+    keywords: 'stripe webhook fanout, stripe webhook proxy, stripe webhook signature verification',
+  },
+  github: {
+    name: 'GitHub',
+    headline: 'FanHook for GitHub Webhooks',
+    description: 'Verify GitHub X-Hub-Signature-256 webhooks and fan out repo events to your CI, chat, and audit log in one hop.',
+    intro1: 'GitHub fires webhooks for every push, pull request, deploy, and security alert. FanHook checks the <code>X-Hub-Signature-256</code> HMAC against your shared secret, persists the event, and reliably delivers it to as many internal services as you need.',
+    intro2: 'Stop writing the same signature-verification snippet in every microservice. Configure one GitHub sink, point your repo or organization webhook at FanHook, and add destinations as your team grows.',
+    secretLabel: 'GitHub webhook secret',
+    setupSteps: [
+      'Create a GitHub sink in your FanHook dashboard with the same secret you plan to put in GitHub.',
+      'In your repo or org settings → Webhooks, add a new webhook with the ingest URL below and content type <code>application/json</code>.',
+      'Add fanout routes for the destinations you want every event mirrored to.',
+    ],
+    keywords: 'github webhook proxy, github webhook fanout, x-hub-signature-256',
+  },
+  shopify: {
+    name: 'Shopify',
+    headline: 'FanHook for Shopify Webhooks',
+    description: 'Verify Shopify X-Shopify-Hmac-Sha256 webhooks once and fan out order, customer, and inventory events to every internal system.',
+    intro1: 'Shopify webhooks power order fulfillment, inventory sync, and customer lifecycle automation — but every consumer needs to verify the same base64 HMAC and tolerate Shopify\'s aggressive retry policy. FanHook does it once and lets the rest of your stack subscribe to a clean, verified event stream.',
+    intro2: 'Drop your Shopify webhook signing secret into FanHook, point your storefront at one ingest URL, and broadcast verified order and product events to your warehouse, your finance tools, and your customer-success Slack channel — all from a single dashboard.',
+    secretLabel: 'Shopify webhook signing secret',
+    setupSteps: [
+      'Create a Shopify sink in your FanHook dashboard and paste the webhook signing secret from your Shopify admin (Settings → Notifications → Webhooks).',
+      'In Shopify, register a new webhook (e.g. <code>orders/create</code>) with the ingest URL below and JSON format.',
+      'Add fanout routes for every system that needs the event — fulfillment, accounting, internal dashboards.',
+    ],
+    keywords: 'shopify webhook fanout, shopify webhook proxy, x-shopify-hmac-sha256',
+  },
+  linear: {
+    name: 'Linear',
+    headline: 'FanHook for Linear Webhooks',
+    description: 'Verify Linear-Signature HMAC webhooks and fan out issue, project, and comment events to chat, CI, and analytics.',
+    intro1: 'Linear webhooks are the cleanest way to mirror engineering activity into the rest of your stack — release notes, on-call rotations, custom dashboards. FanHook verifies the <code>Linear-Signature</code> HMAC, stores every event, and broadcasts it to as many destinations as you wire up.',
+    intro2: 'Skip the per-service Linear integration sprawl. One sink, one ingest URL, and unlimited fanout to Slack, Notion, your data warehouse, or your own homegrown automation.',
+    secretLabel: 'Linear webhook signing secret',
+    setupSteps: [
+      'Create a Linear sink in your FanHook dashboard and paste the signing secret shown when you set up the Linear webhook.',
+      'In Linear → Settings → API → Webhooks, create a webhook pointed at the ingest URL below.',
+      'Add fanout routes for every downstream destination — Slack, GitHub Actions, internal services.',
+    ],
+    keywords: 'linear webhook proxy, linear webhook fanout, linear-signature verification',
+  },
+  pagerduty: {
+    name: 'PagerDuty',
+    headline: 'FanHook for PagerDuty Webhooks',
+    description: 'Verify PagerDuty v3 X-PagerDuty-Signature webhooks and fan out incident events to chat, status pages, and post-mortem tooling.',
+    intro1: 'PagerDuty is the source of truth for incidents — but the v3 webhook format with rotating <code>X-PagerDuty-Signature</code> headers is annoying to verify in every consumer. FanHook handles signature rotation natively (multiple <code>v1=</code> candidates accepted) and forwards verified incident events to anywhere you need them.',
+    intro2: 'Get incidents into Slack, into a status page updater, into your data warehouse, and into your own retrospective tooling — all from one signed feed instead of N copies of the same verification logic.',
+    secretLabel: 'PagerDuty webhook secret',
+    setupSteps: [
+      'Create a PagerDuty sink in your FanHook dashboard and paste the secret PagerDuty showed when you registered the webhook subscription.',
+      'In PagerDuty → Integrations → Generic Webhooks (v3), add a subscription pointed at the ingest URL below.',
+      'Add fanout routes for incident chat channels, status pages, and any downstream automation.',
+    ],
+    keywords: 'pagerduty webhook proxy, pagerduty v3 webhook fanout, x-pagerduty-signature',
+  },
+  clerk: {
+    name: 'Clerk',
+    headline: 'FanHook for Clerk Webhooks',
+    description: 'Verify Clerk\'s Svix-style webhooks (svix-id / svix-timestamp / svix-signature) and fan out user lifecycle events to every system that needs them.',
+    intro1: 'Clerk emits webhooks via Svix for every signup, login, organization change, and session event — and your CRM, billing system, onboarding emailer, and analytics warehouse all want them. FanHook verifies the full Svix payload (id + timestamp + body, base64 HMAC) once and broadcasts the event everywhere.',
+    intro2: 'Paste your Clerk <code>whsec_...</code> signing secret into a FanHook sink, point Clerk at the ingest URL, and stop maintaining six copies of the same Svix verifier across your codebase.',
+    secretLabel: 'Clerk webhook signing secret (whsec_...)',
+    setupSteps: [
+      'Create a Clerk sink in your FanHook dashboard and paste the signing secret from your Clerk dashboard\'s Webhooks page.',
+      'In Clerk → Webhooks, register a new endpoint pointed at the ingest URL below and select the user/org events you care about.',
+      'Add fanout routes for your CRM, billing system, onboarding service, and analytics pipeline.',
+    ],
+    keywords: 'clerk webhook proxy, clerk webhook fanout, svix signature verification, svix-signature',
+  },
+};
+
+router.get('/providers/:slug', (req, res) => {
+  const slug = String(req.params.slug || '').toLowerCase();
+  const page = PROVIDER_PAGES[slug];
+  if (!page) {
+    res.status(404).setHeader('Content-Type', 'text/html');
+    return res.send(`${HEAD('FanHook — Provider not found')}<nav class="topnav">${FH_LOGO}</nav><main class="landing-main"><h1 class="hero-title">Provider not found</h1><p class="hero-sub">We don't have a landing page for <code>${escAttr(slug)}</code>. <a href="/">Back to home</a>.</p></main>${FOOTER}${THEME_SCRIPT}</body></html>`);
+  }
+  const exampleHost = (req.headers['x-forwarded-host'] || req.headers.host || 'fanhook.app').toString().split(',')[0].trim();
+  const exampleProto = (req.headers['x-forwarded-proto'] || 'https').toString().split(',')[0].trim();
+  const ingestUrl = `${exampleProto}://${exampleHost}/ingest/&lt;your-sink-id&gt;`;
+  const stepsHtml = page.setupSteps.map((s, i) =>
+    `<div class="row-card" style="display:flex;gap:1rem;align-items:flex-start;">
+       <div style="flex:0 0 2rem;height:2rem;border-radius:9999px;background:rgba(99,102,241,0.15);color:#6366f1;display:flex;align-items:center;justify-content:center;font-weight:700;">${i + 1}</div>
+       <div style="flex:1;">${s}</div>
+     </div>`
+  ).join('');
+  const html = `<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escAttr(page.headline)} — FanHook</title>
+  <meta name="description" content="${escAttr(page.description)}" />
+  <meta name="keywords" content="${escAttr(page.keywords)}" />
+  <link rel="canonical" href="/providers/${escAttr(slug)}" />
+  <link rel="stylesheet" href="/style.css" />
+  ${THEME_INIT}
+</head>
+<body>
+<nav class="topnav">
+  ${FH_LOGO}
+  <div class="topnav-actions">
+    ${THEME_TOGGLE}
+    <a href="/docs" class="topnav-link">Documentation</a>
+    <a href="/login" class="topnav-link">Sign In</a>
+    <a href="/signup" class="pill btn-primary">Get Started Free</a>
+  </div>
+</nav>
+
+<main class="landing-main">
+  <div class="live-pill"><span class="live-dot"></span><span>${escAttr(page.name)} ready</span></div>
+  <h1 class="hero-title">${escAttr(page.headline)}</h1>
+  <p class="hero-sub">${escAttr(page.description)}</p>
+
+  <div class="hero-ctas">
+    <a href="/signup" class="pill btn-primary">Start free with ${escAttr(page.name)} ${ICON.arrowR}</a>
+    <a href="/docs" class="pill btn-ghost">${ICON.code} Read the docs</a>
+  </div>
+
+  <section style="max-width:760px;margin:3rem auto 0;text-align:left;">
+    <p style="line-height:1.7;margin-bottom:1.25rem;">${page.intro1}</p>
+    <p style="line-height:1.7;">${page.intro2}</p>
+  </section>
+
+  <section style="max-width:760px;margin:3rem auto 0;text-align:left;">
+    <h2 style="font-family:var(--font-heading);font-weight:700;font-size:1.5rem;margin-bottom:1rem;">How it works</h2>
+    <div style="display:flex;flex-direction:column;gap:0.75rem;">${stepsHtml}</div>
+  </section>
+
+  <section style="max-width:760px;margin:3rem auto 0;text-align:left;">
+    <h2 style="font-family:var(--font-heading);font-weight:700;font-size:1.5rem;margin-bottom:1rem;">Ingest URL</h2>
+    <div class="row-card" style="font-family:var(--font-mono);word-break:break-all;">POST ${ingestUrl}</div>
+    <p class="text-secondary" style="margin-top:0.75rem;font-size:0.9rem;">Required header: <code>${escAttr(page.secretLabel)}</code> configured on your ${escAttr(page.name)} webhook. FanHook verifies the signature, stores the event, and fans out to every route you've configured.</p>
+  </section>
+
+  <section style="max-width:760px;margin:3rem auto 0;text-align:center;">
+    <a href="/signup" class="pill btn-primary" style="display:inline-flex;">Create your ${escAttr(page.name)} sink ${ICON.arrowR}</a>
+  </section>
+</main>
+
+${FOOTER}
+${THEME_SCRIPT}
+</body></html>`;
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
+});
+
 // ---------- Session-authed sink endpoints (per-user, used by the dashboard) ----------
 // Unlike /api/sinks (api-key-scoped, single-sink view), these expose the
 // authenticated user's full sink set and allow creating additional sinks tied
@@ -368,11 +544,12 @@ router.post('/dashboard/api/sinks', auth.requireUser, express.json(), auth.requi
   if (!name || !String(name).trim()) {
     return res.status(400).json({ error: 'name is required' });
   }
-  const VALID_PROVIDERS = ['stripe', 'github', 'generic'];
+  const VALID_PROVIDERS = ['stripe', 'github', 'shopify', 'linear', 'pagerduty', 'clerk', 'generic'];
   if (!VALID_PROVIDERS.includes(provider)) {
     return res.status(400).json({ error: `provider must be one of: ${VALID_PROVIDERS.join(', ')}` });
   }
-  if ((provider === 'stripe' || provider === 'github') && !webhook_secret) {
+  const SECRET_REQUIRED = new Set(['stripe', 'github', 'shopify', 'linear', 'pagerduty', 'clerk']);
+  if (SECRET_REQUIRED.has(provider) && !webhook_secret) {
     return res.status(400).json({ error: `webhook_secret is required for provider '${provider}'` });
   }
   const { v4: uuidv4 } = require('uuid');
@@ -859,9 +1036,9 @@ ${THEME_SCRIPT}
   async function openCreateSink() {
     const name = window.prompt('Sink name:', 'My new sink');
     if (!name || !name.trim()) return;
-    const provider = (window.prompt('Provider (generic | stripe | github):', 'generic') || 'generic').trim();
+    const provider = (window.prompt('Provider (generic | stripe | github | shopify | linear | pagerduty | clerk):', 'generic') || 'generic').trim();
     const body = { name: name.trim(), provider };
-    if (provider === 'stripe' || provider === 'github') {
+    if (['stripe','github','shopify','linear','pagerduty','clerk'].indexOf(provider) !== -1) {
       const secret = window.prompt('Webhook secret (required for ' + provider + '):', '');
       if (!secret) { alert('Webhook secret is required for ' + provider); return; }
       body.webhook_secret = secret;
