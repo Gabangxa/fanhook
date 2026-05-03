@@ -1,0 +1,605 @@
+### TC-1.1 · Create sink — happy path
+
+**What it tests:** `POST /api/sinks`
+
+**Steps:**
+
+1. Send:
+
+```bash
+curl -s -X POST http://localhost:3000/api/sinks \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-stripe-sink", "provider": "stripe", "webhookSecret": "whsec_test123"}'
+```
+
+**Success:**
+
+- Response is `201` with `{ id, name, provider, api_key, created_at }`
+- `api_key` starts with a non-empty string
+- Row exists in `sinks` table
+
+---
+
+### TC-1.2 · Create sink — missing name is rejected
+
+**Steps:**
+
+1. Send POST `/api/sinks` with no `name` field
+
+**Success:** `400 { "error": "name is required" }`. No row created.
+
+---
+
+### TC-1.3 · Create sink — missing provider is rejected
+
+**Steps:**
+
+1. Send POST `/api/sinks` with no `provider` field
+
+**Success:** `400 { "error": "provider is required" }`. No row created.
+
+---
+
+### TC-1.4 · List sinks — returns only sinks for authenticated key
+
+**Requires:** Two sinks created with different API keys
+
+**Steps:**
+
+1. `GET /api/sinks` with API key A's header
+
+**Success:** Only sink A is returned. Sink B does not appear.
+
+---
+
+### TC-1.5 · Get single sink
+
+**Steps:**
+
+1. `GET /api/sinks/:id` with the correct API key
+
+**Success:** `200` with sink object.
+
+---
+
+### TC-1.6 · Get sink — wrong API key returns 401
+
+**Steps:**
+
+1. `GET /api/sinks/:id` with a different (wrong) API key
+
+**Success:** `401 { "error": "Unauthorized" }`
+
+---
+
+### TC-1.7 · Delete sink
+
+**Steps:**
+
+1. `DELETE /api/sinks/:id` with correct API key
+2. Attempt `GET /api/sinks/:id`
+
+**Success:**
+
+- First call returns `200`
+- Second call returns `404`
+- Associated routes are also deleted (check DB)
+
+---
+
+## Group 2 — API Key Auth
+
+### TC-2.1 · Request without API key is rejected
+
+**Steps:**
+
+1. `GET /api/sinks` with no `X-Api-Key` or `Authorization` header
+
+**Success:** `401 { "error": "Unauthorized" }`
+
+---
+
+### TC-2.2 · Invalid API key is rejected
+
+**Steps:**
+
+1. `GET /api/sinks` with header `X-Api-Key: garbage_key`
+
+**Success:** `401 { "error": "Unauthorized" }`
+
+---
+
+### TC-2.3 · Bearer token format is accepted
+
+**Steps:**
+
+1. `GET /api/sinks` with header `Authorization: Bearer <valid_api_key>`
+
+**Success:** `200` with sinks list
+
+---
+
+### TC-2.4 · X-Api-Key header format is accepted
+
+**Steps:**
+
+1. `GET /api/sinks` with header `X-Api-Key: <valid_api_key>`
+
+**Success:** `200` with sinks list
+
+---
+
+## Group 3 — Route Management
+
+### TC-3.1 · Add route to sink — happy path
+
+**Requires:** Sink created (TC-1.1). A [webhook.site](http://webhook.site) URL ready.
+
+**Steps:**
+
+```bash
+curl -s -X POST http://localhost:3000/api/sinks/:id/routes \
+  -H "X-Api-Key: <api_key>" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://webhook.site/your-unique-id"}'
+```
+
+**Success:** `201` with `{ id, sink_id, url, created_at }`
+
+---
+
+### TC-3.2 · Add route — missing URL is rejected
+
+**Steps:**
+
+1. POST to `/api/sinks/:id/routes` with no `url` field
+
+**Success:** `400 { "error": "url is required" }`
+
+---
+
+### TC-3.3 · Add route — invalid URL format is rejected
+
+**Steps:**
+
+1. POST with `url: "not-a-url"`
+
+**Success:** `400 { "error": "url must be a valid HTTP/HTTPS URL" }` (or similar)
+
+---
+
+### TC-3.4 · List routes for sink
+
+**Steps:**
+
+1. `GET /api/sinks/:id/routes` with correct API key
+
+**Success:** Array of route objects for that sink only
+
+---
+
+### TC-3.5 · Delete route
+
+**Steps:**
+
+1. `DELETE /api/sinks/:id/routes/:routeId`
+2. `GET /api/sinks/:id/routes`
+
+**Success:** Route no longer appears in list
+
+---
+
+### TC-3.6 · Free tier — 4th route is rejected
+
+**Requires:** Sink on Free tier with 3 routes already added
+
+**Steps:**
+
+1. Attempt to add a 4th route
+
+**Success:** `403 { "error": "Free tier limited to 3 routes per sink" }` (or 402)
+
+---
+
+## Group 4 — Ingest Core
+
+### TC-4.1 · Ingest endpoint accepts a POST and returns 200
+
+**Steps:**
+
+```bash
+curl -s -X POST http://localhost:3000/ingest/:sinkId \
+  -H "Content-Type: application/json" \
+  -H "stripe-signature: t=1,v1=dummy" \
+  -d '{"type": "test.event"}'
+```
+
+**Success:** `200 { "received": true }` (signature verification may fail — that's tested separately)
+
+---
+
+### TC-4.2 · Ingest for unknown sinkId returns 404
+
+**Steps:**
+
+1. POST to `/ingest/nonexistent_sink_id`
+
+**Success:** `404 { "error": "Sink not found" }`
+
+---
+
+### TC-4.3 · Event is stored in DB after ingest
+
+**Steps:**
+
+1. POST a valid ingest request (bypass sig check or use correct sig)
+2. `GET /api/sinks/:id/events` and find the new event
+
+**Success:** Event appears with `status: "pending"` or `"delivered"`, correct `received_at`
+
+---
+
+## Group 5 — Signature Verification
+
+### TC-5.1 · Valid Stripe signature is accepted
+
+**Requires:** Sink with `webhookSecret: "whsec_test123"`. Use Stripe CLI to fire a test event.
+
+**Steps:**
+
+```bash
+stripe trigger payment_intent.succeeded \
+  --webhook-endpoint http://localhost:3000/ingest/:sinkId
+```
+
+**Success:** `200 { "received": true }`. Event status is `pending` or `delivered` — not `rejected`.
+
+---
+
+### TC-5.2 · Tampered Stripe payload is rejected
+
+**Steps:**
+
+1. Compute a valid Stripe signature manually for payload A
+2. Send payload B with payload A's signature
+
+**Success:** `400 { "error": "Invalid signature" }`. Event is not stored.
+
+---
+
+### TC-5.3 · Missing Stripe signature header is rejected
+
+**Steps:**
+
+1. POST to `/ingest/:sinkId` with no `stripe-signature` header (Stripe provider)
+
+**Success:** `400 { "error": "Missing signature" }`
+
+---
+
+### TC-5.4 · Valid GitHub signature is accepted
+
+**Requires:** Sink with `provider: "github"` and a `webhookSecret`
+
+**Steps:**
+
+1. Compute HMAC-SHA256 of payload with the secret
+2. POST with header `x-hub-signature-256: sha256=<hmac>`
+
+**Success:** `200 { "received": true }`
+
+---
+
+### TC-5.5 · Sink with no webhookSecret — signature check is skipped
+
+**Requires:** Sink created without `webhookSecret`
+
+**Steps:**
+
+1. POST to `/ingest/:sinkId` with arbitrary body, no signature header
+
+**Success:** `200 { "received": true }`. Event stored with `status: "pending"`.
+
+---
+
+## Group 6 — Fanout & Delivery
+
+### TC-6.1 · Fanout delivers to all configured routes
+
+**Requires:** Sink with 2 [webhook.site](http://webhook.site) routes. Valid ingest.
+
+**Steps:**
+
+1. POST a valid ingest payload
+2. Wait ~2 seconds
+3. Check both [webhook.site](http://webhook.site) URLs for received payloads
+
+**Success:**
+
+- Both [webhook.site](http://webhook.site) URLs received the payload
+- `GET /api/sinks/:id/events` shows event with `status: "delivered"`
+- Delivery attempts table has 2 rows, both with `http_status: 200`
+
+---
+
+### TC-6.2 · Failed delivery is retried up to 3 times
+
+**Requires:** A route URL that returns 500 (use [webhook.site](http://webhook.site) with a custom response rule, or a URL you control)
+
+**Steps:**
+
+1. Set up route to return 503
+2. POST a valid ingest
+3. Wait for retries (linear backoff)
+
+**Success:**
+
+- `delivery_attempts` table shows 3 rows for this event/route, all `status: "failed"`, `http_status: 503`
+- Event status updates to `"failed"` after all retries exhausted
+
+---
+
+### TC-6.3 · Mixed delivery — one route succeeds, one fails
+
+**Requires:** Two routes: one working [webhook.site](http://webhook.site) URL, one returning 500
+
+**Steps:**
+
+1. POST valid ingest
+2. Check delivery attempts for both routes
+
+**Success:**
+
+- Route 1: `status: "success"`, `http_status: 200`
+- Route 2: `status: "failed"` after 3 attempts
+- Event-level status reflects the partial failure
+
+---
+
+### TC-6.4 · Event log returns last 50 events
+
+**Requires:** More than 50 events on the sink
+
+**Steps:**
+
+1. `GET /api/sinks/:id/events`
+
+**Success:** Returns exactly 50 events, ordered by `received_at` descending
+
+---
+
+## Group 7 — Usage Enforcement (Freemium)
+
+### TC-7.1 · Free tier allows up to 1,000 events/mo
+
+**Requires:** Free tier sink with fewer than 1,000 events this month
+
+**Steps:**
+
+1. POST ingest payload
+
+**Success:** `200 { "received": true }`. Event stored and fanned out.
+
+---
+
+### TC-7.2 · Free tier blocks ingest at 1,001st event
+
+**Requires:** Seed 1,000 event rows for the sink this month (SQL insert)
+
+```sql
+INSERT INTO events (id, sink_id, provider, payload, received_at, status)
+SELECT 'seed_' || rowid, '<sink_id>', 'stripe', '{"type":"seed"}',
+       strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'delivered'
+FROM (WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt LIMIT 1000) SELECT * FROM cnt);
+```
+
+**Steps:**
+
+1. POST one more ingest request
+
+**Success:**
+
+- `429 { "error": "Monthly event limit reached", "upgrade_url": "/billing/upgrade" }`
+- No event row created
+- No fanout attempted
+
+---
+
+### TC-7.3 · Starter tier — ingest allowed above 1,000 events
+
+**Requires:** Sink on `tier: "starter"` with 1,000+ events this month
+
+**Steps:**
+
+1. POST ingest payload
+
+**Success:** `200 { "received": true }`. Not blocked.
+
+---
+
+## Group 8 — Stripe Billing
+
+### TC-8.1 · Billing status endpoint returns tier and usage
+
+**Steps:**
+
+```bash
+curl -s http://localhost:3000/api/billing/status \
+  -H "X-Api-Key: <api_key>"
+```
+
+**Success:** `200 { "tier": "free", "events_this_month": N, "limit": 1000 }`
+
+---
+
+### TC-8.2 · Checkout session is created
+
+**Requires:** `STRIPE_SECRET_KEY` and `STRIPE_STARTER_PRICE_ID` set
+
+**Steps:**
+
+```bash
+curl -s -X POST http://localhost:3000/api/billing/checkout \
+  -H "X-Api-Key: <api_key>" \
+  -H "Content-Type: application/json"
+```
+
+**Success:** `200 { "url": "https://checkout.stripe.com/..." }`. URL opens a valid Stripe checkout.
+
+---
+
+### TC-8.3 · Successful checkout upgrades tier to starter
+
+**Requires:** Stripe CLI listening. Complete a checkout session with test card `4242 4242 4242 4242`.
+
+**Steps:**
+
+1. Open the checkout URL from TC-8.2
+2. Complete payment with test card
+3. Stripe fires `checkout.session.completed` → FanHook receives it
+4. Check `GET /api/billing/status`
+
+**Success:**
+
+- `tier` is now `"starter"`
+- Sink row has `stripe_customer_id` and `stripe_subscription_id` set
+- Browser redirected to `/billing/success`
+
+---
+
+### TC-8.4 · Stripe webhook endpoint verifies signature
+
+**Steps:**
+
+1. POST to `/webhooks/stripe` with no signature or wrong signature:
+
+```bash
+curl -s -X POST http://localhost:3000/webhooks/stripe \
+  -H "Content-Type: application/json" \
+  -d '{"type":"checkout.session.completed"}'
+```
+
+**Success:** `400` or `401`. No tier change occurs.
+
+---
+
+### TC-8.5 · Subscription cancellation downgrades to free
+
+**Requires:** Sink on Starter tier (TC-8.3 completed)
+
+**Steps:**
+
+1. Trigger cancellation via Stripe CLI:
+
+```bash
+stripe trigger customer.subscription.deleted
+```
+
+**Success:**
+
+- `GET /api/billing/status` returns `"tier": "free"`
+- `stripe_subscription_id` is cleared from the sink row
+
+---
+
+### TC-8.6 · Past-due subscription downgrades to free
+
+**Steps:**
+
+1. Trigger:
+
+```bash
+stripe trigger customer.subscription.updated \
+  --override subscription:status=past_due
+```
+
+**Success:** Tier downgraded to `"free"`
+
+---
+
+## Group 9 — Web UI (Smoke Tests)
+
+### TC-9.1 · Landing page loads without errors
+
+**Steps:**
+
+1. Navigate to `http://localhost:3000/`
+
+**Success:** Page renders with hero headline, pricing table showing Free ($0) and Starter ($9/mo), and a CTA button. No console errors. No 500.
+
+---
+
+### TC-9.2 · Dashboard loads and shows sink list
+
+**Requires:** At least one sink created
+
+**Steps:**
+
+1. Navigate to `http://localhost:3000/dashboard`
+
+**Success:** Sink name, provider, and route count visible. Usage bar showing events used this month.
+
+---
+
+### TC-9.3 · Onboarding wizard appears for new users
+
+**Steps:**
+
+1. Navigate to `/dashboard` before creating any sinks
+
+**Success:** Onboarding steps are visible (create sink → add route → test ingest)
+
+---
+
+### TC-9.4 · Create sink from UI
+
+**Steps:**
+
+1. Fill in the sink creation form
+2. Submit
+
+**Success:** New sink appears in the list. API key is displayed (copy prompt visible).
+
+---
+
+### TC-9.5 · Add route from UI
+
+**Steps:**
+
+1. Open a sink
+2. Add a [webhook.site](http://webhook.site) URL as a route
+
+**Success:** Route appears in the routes list under the sink.
+
+---
+
+### TC-9.6 · Event log renders per-sink
+
+**Requires:** Sink with at least 5 events
+
+**Steps:**
+
+1. Click into a sink → view events tab
+
+**Success:** Table shows event ID, status badge (delivered/failed/pending), timestamp, and route delivery results.
+
+---
+
+### TC-9.7 · Upgrade CTA appears on Free tier
+
+**Steps:**
+
+1. View dashboard with Free tier sink near limit
+
+**Success:** "Upgrade to Starter" button/banner is visible. Clicking it opens the Stripe checkout (TC-8.2 flow).
+
+---
+
+### TC-9.8 · Billing success page renders after upgrade
+
+**Steps:**
+
+1. Complete the checkout flow (TC-8.3)
+2. Land on `/billing/success`
+
+**Success:** Confirmation message visible. No 404 or crash.Group 1 — Sink Creation
