@@ -161,6 +161,23 @@ router.post('/sinks/:sinkId/routes', requireSinkAuth, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// DELETE /api/sinks/:sinkId — remove a sink and all its dependent rows
+// ---------------------------------------------------------------------------
+router.delete('/sinks/:sinkId', requireSinkAuth, (req, res) => {
+  const { sinkId } = req.params;
+  db.transaction(() => {
+    db.prepare(
+      'DELETE FROM delivery_attempts WHERE event_id IN (SELECT id FROM events WHERE sink_id = ?)'
+    ).run(sinkId);
+    db.prepare('DELETE FROM events WHERE sink_id = ?').run(sinkId);
+    db.prepare('DELETE FROM routes WHERE sink_id = ?').run(sinkId);
+    db.prepare('DELETE FROM dlq_entries WHERE sink_id = ?').run(sinkId);
+    db.prepare('DELETE FROM sinks WHERE id = ?').run(sinkId);
+  })();
+  return res.status(204).send();
+});
+
+// ---------------------------------------------------------------------------
 // DELETE /api/sinks/:sinkId/routes/:routeId — remove a route
 // ---------------------------------------------------------------------------
 router.delete('/sinks/:sinkId/routes/:routeId', requireSinkAuth, (req, res) => {

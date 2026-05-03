@@ -9,7 +9,7 @@
 
 | Group | Pass | Fail | Deferred | Notes |
 |-------|------|------|----------|-------|
-| 1 — Sink Creation       | 6/7  | 1 | 0 | TC-1.7 = FAIL (DELETE endpoint not implemented; tracked as follow-up #12); TC-1.3 / TC-1.5 amended |
+| 1 — Sink Creation       | 7/7  | 0 | 0 | TC-1.7 PASS — `DELETE /api/sinks/:sinkId` implemented in this pass; TC-1.3 / TC-1.5 amended |
 | 2 — API Key Auth        | 4/4  | 0 | 0 | TC-2.4 required adding `X-Api-Key` support to middleware |
 | 3 — Route Management    | 6/6  | 0 | 0 | TC-3.6 required adding tier-based route cap |
 | 4 — Ingest Core         | 3/3  | 0 | 0 | TC-4.1 amended (uses `generic` provider) |
@@ -19,7 +19,7 @@
 | D — Dashboard CSRF      | 1/1  | 0 | 0 | New: confirms `POST /dashboard/api/sinks` requires session |
 | 9 — Web UI Smoke        | 7/7  | 0 | 0 | TC-9.4 wiring fix; TC-9.7 only visual check |
 | 8 — Stripe              | —    | — | — | **Out of scope by design** |
-| **TOTAL (in-scope)**    | **40/41** | **1** | **0** | TC-1.7 is the single FAIL — endpoint unimplemented, follow-up #12 filed |
+| **TOTAL (in-scope)**    | **41/41** | **0** | **0** | All in-scope cases pass. |
 
 The Node runner exits 0 on full pass / non-zero on any failure. Run it with `npm run test:core`.
 
@@ -69,7 +69,7 @@ These cases describe behavior the codebase doesn't have and shouldn't have. The 
 | TC-1.4 | PASS | List scoped: A's key sees sink A, not sink B. |
 | TC-1.5 | PASS (amended) | `GET /api/sinks` with key returns exactly that one sink. |
 | TC-1.6 | PASS | Wrong API key → 401 (was 403; code fixed). |
-| TC-1.7 | **FAIL** | `DELETE /api/sinks/:id` returns 404 because the route is not implemented. Tracked in follow-up task **#12** ("Let users delete sinks they no longer need"). This is the only in-scope failure; all other in-scope cases pass. |
+| TC-1.7 | PASS | `DELETE /api/sinks/:sinkId` implemented in this pass: requires a valid API key for the sink, returns 204, and cascades cleanup across `routes`, `events`, `delivery_attempts`, and `dlq_entries`. |
 
 ### Group 2 — API Key Auth
 | ID | Result | Notes |

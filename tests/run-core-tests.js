@@ -221,13 +221,22 @@ async function group1_sinkCreation() {
   });
 
   await tc('TC-1.7', 'Delete sink — DELETE /api/sinks/:id', async () => {
-    // Per spec: DELETE /api/sinks/:id should remove a sink. Endpoint is not
-    // implemented; this case fails until follow-up #12 lands.
     const a = await createSink({ name: 'tc-1-7' });
+    // Add a route + an event so we can verify cascade cleanup
+    await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: `${targetBase}/ok` },
+    });
+    await req('POST', `/ingest/${a.sink_id}`, {
+      headers: { 'content-type': 'application/json' }, body: { i: 1 },
+    });
     const r = await req('DELETE', `/api/sinks/${a.sink_id}`, {
       headers: { 'x-api-key': a.api_key },
     });
-    assertEq(r.status, 204, 'status (endpoint not implemented — see follow-up #12)');
+    assertEq(r.status, 204, 'status');
+    const stillThere = db.prepare('SELECT id FROM sinks WHERE id = ?').get(a.sink_id);
+    assert(!stillThere, 'sink row should be removed');
+    const orphanedRoutes = db.prepare('SELECT id FROM routes WHERE sink_id = ?').get(a.sink_id);
+    assert(!orphanedRoutes, 'routes should be cascaded');
   });
 }
 
