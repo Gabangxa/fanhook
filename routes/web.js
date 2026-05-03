@@ -352,6 +352,41 @@ ${THEME_SCRIPT}
   res.send(html);
 });
 
+// ---------- Session-authed sink endpoints (per-user, used by the dashboard) ----------
+// Unlike /api/sinks (api-key-scoped, single-sink view), these expose the
+// authenticated user's full sink set and allow creating additional sinks tied
+// to the user.
+router.get('/dashboard/api/sinks', auth.requireUser, (req, res) => {
+  const sinks = db
+    .prepare('SELECT * FROM sinks WHERE user_id = ? ORDER BY created_at ASC')
+    .all(req.user.id);
+  return res.json(sinks);
+});
+
+router.post('/dashboard/api/sinks', auth.requireUser, express.json(), auth.requireCsrf, (req, res) => {
+  const { name, provider = 'generic', webhook_secret } = req.body || {};
+  if (!name || !String(name).trim()) {
+    return res.status(400).json({ error: 'name is required' });
+  }
+  const VALID_PROVIDERS = ['stripe', 'github', 'generic'];
+  if (!VALID_PROVIDERS.includes(provider)) {
+    return res.status(400).json({ error: `provider must be one of: ${VALID_PROVIDERS.join(', ')}` });
+  }
+  if ((provider === 'stripe' || provider === 'github') && !webhook_secret) {
+    return res.status(400).json({ error: `webhook_secret is required for provider '${provider}'` });
+  }
+  const { v4: uuidv4 } = require('uuid');
+  const id = uuidv4();
+  const apiKey = uuidv4();
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO sinks (id, name, provider, api_key, webhook_secret, created_at, user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, String(name).trim(), provider, apiKey, webhook_secret || null, now, req.user.id);
+  const sink = db.prepare('SELECT * FROM sinks WHERE id = ?').get(id);
+  return res.status(201).json(sink);
+});
+
 // ---------- Dashboard ----------
 router.get('/dashboard', auth.requireUser, (req, res) => {
   // Look up the user's primary sink (auto-created at signup). Defensive
@@ -434,7 +469,7 @@ router.get('/dashboard', auth.requireUser, (req, res) => {
             <h2>Incoming Webhooks</h2>
             <p class="sub">Create sinks to receive events from external platforms.</p>
           </div>
-          <button class="pill btn-yellow">${ICON.plus} Create Sink</button>
+          <button class="pill btn-yellow" onclick="openCreateSink()">${ICON.plus} Create Sink</button>
         </div>
         <div id="sinks-loading" class="text-muted" style="padding:1rem;">Loading sinks&hellip;</div>
         <div id="sinks-list"></div>
@@ -614,6 +649,7 @@ ${THEME_SCRIPT}
   let SINK_ID = ${sinkIdJs};
   let selectedSinkId = SINK_ID;
   const USER_EMAIL = ${userEmailJs};
+  const CSRF_TOKEN = ${auth.safeJsonForScript(csrfToken)};
   const headers = { 'Authorization': 'Bearer ' + API_KEY, 'Content-Type': 'application/json' };
   let currentSinks = [];
   let activeSseConnections = [];
@@ -738,7 +774,9 @@ ${THEME_SCRIPT}
 
   async function loadSinks() {
     try {
-      const res = await fetch('/api/sinks', { headers });
+      // Use session-scoped endpoint so we see ALL sinks for this user, not
+      // just the one bound to a single api_key.
+      const res = await fetch('/dashboard/api/sinks');
       const sinks = await res.json();
       currentSinks = Array.isArray(sinks) ? sinks : [];
       if (currentSinks.length > 0) {
@@ -815,6 +853,32 @@ ${THEME_SCRIPT}
         '<div class="row-card text-muted" style="padding:1.5rem 1rem;">Use the form below to add routes. Route IDs are returned on creation.</div>';
       document.getElementById('ingest-url-hint').textContent =
         window.location.origin + '/ingest/' + SINK_ID;
+    }
+  }
+
+  async function openCreateSink() {
+    const name = window.prompt('Sink name:', 'My new sink');
+    if (!name || !name.trim()) return;
+    const provider = (window.prompt('Provider (generic | stripe | github):', 'generic') || 'generic').trim();
+    const body = { name: name.trim(), provider };
+    if (provider === 'stripe' || provider === 'github') {
+      const secret = window.prompt('Webhook secret (required for ' + provider + '):', '');
+      if (!secret) { alert('Webhook secret is required for ' + provider); return; }
+      body.webhook_secret = secret;
+    }
+    try {
+      const res = await fetch('/dashboard/api/sinks', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': CSRF_TOKEN },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) { alert('Error: ' + (data.error || 'Unknown')); return; }
+      // Refresh list and surface the new key
+      await loadSinks();
+      alert('Sink created!\\nName: ' + data.name + '\\nAPI key: ' + data.api_key);
+    } catch (e) {
+      alert('Error: ' + e.message);
     }
   }
 

@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test:core": "FANHOOK_RETRY_DELAYS_MS=0,100,100 node tests/run-core-tests.js"
   },
   "dependencies": {
     "better-sqlite3": "^9.6.0",

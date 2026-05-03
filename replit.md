@@ -57,6 +57,25 @@ Listens on `PORT` env var (default 3000). SQLite DB stored at `fanhook.db` in pr
 
 *Required only for Stripe billing flows.
 
+## Testing
+
+Core functionality test suite (Groups 1–7 + Group 9 UI smoke; Stripe excluded):
+
+```bash
+npm run test:core
+```
+
+The Node runner (`tests/run-core-tests.js`) talks to the live server on `PORT` (default 3000), spins up an in-process HTTP target on a random port to act as a webhook destination, and reaches into the SQLite DB directly for fixture seeding/verification. Fixtures are tagged with the `tc-` name prefix and cleaned before/after each run. Group 9 UI checks were run via the testing skill (Playwright). Full results: `tests/CORE_TEST_RESULTS.md`.
+
+The `Start application` workflow runs with `FANHOOK_RETRY_DELAYS_MS=0,100,100` so retry-related tests finish in seconds. In production this env var is unset and `lib/fanout.js` falls back to its default `[0, 30s, 120s]` schedule.
+
+Other endpoints/behaviors added or fixed for the suite:
+- `GET/POST /dashboard/api/sinks` — session-authed, per-user sink list and create (used by the dashboard UI; `/api/sinks` remains api-key-scoped). The POST is CSRF-protected via `auth.requireCsrf` and accepts the token in either an `X-CSRF-Token` header or a `_csrf` body field.
+- `requireAuth` accepts `Authorization: Bearer <key>` OR `X-Api-Key: <key>`.
+- `POST /api/sinks/:sinkId/routes` enforces tier route caps (Free=3, Starter=10) returning 403.
+- `requireSinkAuth` returns 401 (not 403) for cross-tenant API key usage.
+- Missing/malformed signature header on ingest → 400; cryptographic mismatch → 401.
+
 ## Dependencies
 - `express` ^4.18
 - `better-sqlite3` ^9.4

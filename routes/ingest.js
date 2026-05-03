@@ -45,7 +45,15 @@ router.post('/:sinkId', async (req, res) => {
   // Verify signature — skip strict check for generic providers
   const { valid, error } = verifySignature(sink.provider, rawBodyStr, req.headers, sink.webhook_secret);
   if (!valid && sink.provider !== 'generic') {
-    return res.status(401).json({ error: `Signature verification failed: ${error}` });
+    // 400 for malformed/missing signature headers (client error in framing);
+    // 401 only for cryptographic mismatches (auth failure).
+    const errStr = String(error || '');
+    const isFramingError =
+      /^Missing /.test(errStr) ||
+      /format/i.test(errStr) ||
+      /Verification error/i.test(errStr);
+    const status = isFramingError ? 400 : 401;
+    return res.status(status).json({ error: `Signature verification failed: ${error}` });
   }
 
   // Create event record

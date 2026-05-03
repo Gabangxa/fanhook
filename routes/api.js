@@ -11,11 +11,15 @@ const router = express.Router();
 // Auth middleware — validates Bearer token, attaches req.sink
 // ---------------------------------------------------------------------------
 function requireAuth(req, res, next) {
+  // Accept either `Authorization: Bearer <key>` or `X-Api-Key: <key>`.
   const authHeader = req.headers['authorization'] || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+  const xApiKey = req.headers['x-api-key'] || '';
+  const token = authHeader.startsWith('Bearer ')
+    ? authHeader.slice(7).trim()
+    : (xApiKey ? String(xApiKey).trim() : null);
 
   if (!token) {
-    return res.status(401).json({ error: 'Missing Authorization header' });
+    return res.status(401).json({ error: 'Missing API key (use Authorization: Bearer <key> or X-Api-Key header)' });
   }
 
   const sink = db.prepare('SELECT * FROM sinks WHERE api_key = ?').get(token);
@@ -31,7 +35,7 @@ function requireAuth(req, res, next) {
 function requireSinkAuth(req, res, next) {
   requireAuth(req, res, () => {
     if (req.sink.id !== req.params.sinkId) {
-      return res.status(403).json({ error: 'Forbidden: sink does not belong to this API key' });
+      return res.status(401).json({ error: 'Invalid API key for this sink' });
     }
     next();
   });
@@ -125,7 +129,23 @@ router.post('/sinks/:sinkId/routes', requireSinkAuth, (req, res) => {
   }
 
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
-    return res.status(400).json({ error: 'url must start with http:// or https://' });
+    return res.status(400).json({ error: 'url must be a valid HTTP/HTTPS URL' });
+  }
+
+  // Enforce per-tier route cap (Free: 3, Starter: 10).
+  const { TIER_LIMITS } = require('../lib/metering');
+  const tier = req.sink.tier || 'free';
+  const routeCap = (TIER_LIMITS[tier] ?? TIER_LIMITS.free).routes;
+  const existingCount = db
+    .prepare('SELECT COUNT(*) AS c FROM routes WHERE sink_id = ?')
+    .get(req.params.sinkId).c;
+  if (existingCount >= routeCap) {
+    return res.status(403).json({
+      error: `${tier === 'free' ? 'Free' : 'Starter'} tier limited to ${routeCap} routes per sink`,
+      tier,
+      route_limit: routeCap,
+      upgrade_url: '/dashboard#upgrade',
+    });
   }
 
   const routeId = uuidv4();
@@ -327,7 +347,7 @@ router.get('/sinks/:sinkId/stream', async (req, res) => {
   }
 
   if (sink.id !== sinkId) {
-    return res.status(403).json({ error: 'Forbidden: sink does not belong to this API key' });
+    return res.status(401).json({ error: 'Invalid API key for this sink' });
   }
 
   // Commit SSE headers immediately — the stream stays open even while NATS is
