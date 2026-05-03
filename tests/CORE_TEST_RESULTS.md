@@ -46,7 +46,7 @@ These cases describe behavior the codebase doesn't have and shouldn't have. The 
 
 * **TC-1.3 — Missing provider.** Spec said the API should return `400 "provider is required"`. The code intentionally defaults `provider` to `"generic"` and creates the sink. Test now asserts `201` with `provider="generic"`.
 * **TC-1.5 — Get single sink.** No `GET /api/sinks/:id` endpoint exists; `GET /api/sinks` already returns just the one sink bound to the API key (api_key is unique per sink). Test asserts that scoped behavior. A dedicated single-sink GET could be a future addition.
-* **TC-1.7 — Delete sink.** No `DELETE /api/sinks/:id` endpoint exists. Recorded as a known gap; the test case is documented as not implemented and skipped (passes with a note rather than failing).
+* **TC-1.7 — Delete sink.** Reconciled by implementing the spec: `DELETE /api/sinks/:sinkId` now exists in `routes/api.js` (auth via the sink's API key, returns 204, cascades through `routes`, `events`, `delivery_attempts`, `dlq_entries`). No spec amendment required.
 * **TC-2.1 / TC-2.2 — Auth error wording.** Spec asked for exact strings `"Missing API key"` / `"Invalid API key"`. The "missing" message is more descriptive (lists both header formats). Tests now assert the response shape (`401` + non-empty `error` field) and the exact wording for `"Invalid API key"` only.
 * **TC-4.1 — Ingest happy path.** Spec used `provider:"stripe"` with a dummy `stripe-signature` header — that path will always fail signature verification and return 401. The realistic happy-path uses a `provider:"generic"` sink (verification skipped by design). Stripe happy-path is exercised by TC-5.1 with a real HMAC.
 * **TC-5.5 — Sink with no secret.** Spec implied stripe/github sinks could be created without a secret. The create endpoint correctly rejects that with 400. Only `provider:"generic"` sinks legitimately skip verification; the test now exercises that path.
@@ -54,7 +54,7 @@ These cases describe behavior the codebase doesn't have and shouldn't have. The 
 ## Known Behavioral Divergence (documented, not a bug)
 
 * **Direct fanout retries 3× even without NATS.** The spec implied retries only happen via the worker. In this build, both code paths use the same 3-attempt loop in `lib/fanout.js`, so direct fanout (used when JetStream is unavailable, e.g. in this dev environment) also retries 3 times. TC-6.2/6.3 assert this exact count and pass.
-* **No `GET /api/sinks/:id` and no `DELETE /api/sinks/:id`.** See TC-1.5 and TC-1.7 above.
+* **No `GET /api/sinks/:id` (single-sink read).** See TC-1.5 above — `GET /api/sinks` returns the authenticated key's sinks instead. `DELETE /api/sinks/:sinkId` is implemented (TC-1.7).
 
 ---
 
