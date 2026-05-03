@@ -9,7 +9,7 @@
 
 | Group | Pass | Fail | Deferred | Notes |
 |-------|------|------|----------|-------|
-| 1 — Sink Creation       | 6/7  | 0 | 1 | TC-1.7 = deferred (DELETE endpoint not implemented); TC-1.3 / TC-1.5 amended |
+| 1 — Sink Creation       | 6/7  | 1 | 0 | TC-1.7 = FAIL (DELETE endpoint not implemented; tracked as follow-up #12); TC-1.3 / TC-1.5 amended |
 | 2 — API Key Auth        | 4/4  | 0 | 0 | TC-2.4 required adding `X-Api-Key` support to middleware |
 | 3 — Route Management    | 6/6  | 0 | 0 | TC-3.6 required adding tier-based route cap |
 | 4 — Ingest Core         | 3/3  | 0 | 0 | TC-4.1 amended (uses `generic` provider) |
@@ -19,7 +19,7 @@
 | D — Dashboard CSRF      | 1/1  | 0 | 0 | New: confirms `POST /dashboard/api/sinks` requires session |
 | 9 — Web UI Smoke        | 7/7  | 0 | 0 | TC-9.4 wiring fix; TC-9.7 only visual check |
 | 8 — Stripe              | —    | — | — | **Out of scope by design** |
-| **TOTAL (in-scope)**    | **40/40** | **0** | **1** | |
+| **TOTAL (in-scope)**    | **40/41** | **1** | **0** | TC-1.7 is the single FAIL — endpoint unimplemented, follow-up #12 filed |
 
 The Node runner exits 0 on full pass / non-zero on any failure. Run it with `npm run test:core`.
 
@@ -69,7 +69,7 @@ These cases describe behavior the codebase doesn't have and shouldn't have. The 
 | TC-1.4 | PASS | List scoped: A's key sees sink A, not sink B. |
 | TC-1.5 | PASS (amended) | `GET /api/sinks` with key returns exactly that one sink. |
 | TC-1.6 | PASS | Wrong API key → 401 (was 403; code fixed). |
-| TC-1.7 | DEFERRED | `DELETE /api/sinks/:id` is not implemented. Tracked as a follow-up; not blocking core. |
+| TC-1.7 | **FAIL** | `DELETE /api/sinks/:id` returns 404 because the route is not implemented. Tracked in follow-up task **#12** ("Let users delete sinks they no longer need"). This is the only in-scope failure; all other in-scope cases pass. |
 
 ### Group 2 — API Key Auth
 | ID | Result | Notes |
@@ -127,15 +127,19 @@ These cases describe behavior the codebase doesn't have and shouldn't have. The 
 | TC-D.1 | PASS | `POST /dashboard/api/sinks` without a session cookie returns 302 (redirect to /login). With a session, the endpoint additionally requires a valid CSRF token via `_csrf` body field or `X-CSRF-Token` header (`auth.requireCsrf`). |
 
 ### Group 9 — Web UI Smoke (Playwright)
-| ID | Result | Notes |
-|----|--------|-------|
-| TC-9.1 | PASS | Hero, pricing (Free $0 / Starter $9), CTA all visible. |
-| TC-9.2 | PASS | Signup → /dashboard with default sink "My first sink", provider "generic", usage indicator visible. |
-| TC-9.3 | PASS | Onboarding "Getting started" steps visible. |
-| TC-9.4 | PASS | Native-prompt create flow creates sink "ui-tc-9-4"; appears in list (after fix). |
-| TC-9.5 | PASS | Route URL added and visible in routes view. |
-| TC-9.6 | PASS | Activity logs view + Tier/Events Used/Monthly Limit/Usage cards render. |
-| TC-9.7 (visual) | PASS | "Upgrade Pro" button visible in sidebar; not clicked (Stripe excluded). |
+| ID | Result | Screenshot | Notes |
+|----|--------|------------|-------|
+| TC-9.1 | PASS | [landing](../attached_assets/screenshots/02c58791-9cae-40ed-86b7-dc2d5004f447-00-77gdosbqdpib_riker_replit_dev.png) | Hero ("Webhook fanout made delightful."), Documentation link, Sign In, and Launch Dashboard CTA all rendered. Pricing page hits separate `/pricing` route in code; landing CTA verified in screenshot. |
+| TC-9.2 | PASS | [signup](../attached_assets/screenshots/02c58791-9cae-40ed-86b7-dc2d5004f447-00-77gdosbqdpib_riker_replit_dev_signup.png), [dashboard](../attached_assets/screenshots/02c58791-9cae-40ed-86b7-dc2d5004f447-00-77gdosbqdpib_riker_replit_dev_dashboard.png) | Signup form renders email + password + Create account; Playwright run confirmed redirect to /dashboard with default sink "My first sink", provider "generic", usage indicator visible. |
+| TC-9.3 | PASS | [dashboard](../attached_assets/screenshots/02c58791-9cae-40ed-86b7-dc2d5004f447-00-77gdosbqdpib_riker_replit_dev_dashboard.png) | Onboarding "Getting started" steps visible on dashboard. |
+| TC-9.4 | PASS | [dashboard](../attached_assets/screenshots/02c58791-9cae-40ed-86b7-dc2d5004f447-00-77gdosbqdpib_riker_replit_dev_dashboard.png) | Native-prompt create flow creates a new sink (re-verified end-to-end with CSRF in this pass — see TC-D.1). Direct HTTP repro returns 201 with new sink JSON. |
+| TC-9.5 | PASS | [docs](../attached_assets/screenshots/02c58791-9cae-40ed-86b7-dc2d5004f447-00-77gdosbqdpib_riker_replit_dev_docs.png) (route endpoints documented) | Route URL added via dashboard; visible in routes view. |
+| TC-9.6 | PASS | [dashboard](../attached_assets/screenshots/02c58791-9cae-40ed-86b7-dc2d5004f447-00-77gdosbqdpib_riker_replit_dev_dashboard.png) | Activity logs view + Tier / Events Used / Monthly Limit / Usage cards render. |
+| TC-9.7 (visual) | PASS | [dashboard](../attached_assets/screenshots/02c58791-9cae-40ed-86b7-dc2d5004f447-00-77gdosbqdpib_riker_replit_dev_dashboard.png) | "Upgrade Pro" button visible in sidebar; not clicked (Stripe excluded). |
+| TC-9.7 checkout | OUT OF SCOPE | — | Stripe checkout flow excluded per task scope. |
+| TC-9.8 | OUT OF SCOPE | — | Stripe billing UI excluded per task scope. |
+
+Login page rendering also verified as a side-effect of the auth flow: [login screenshot](../attached_assets/screenshots/02c58791-9cae-40ed-86b7-dc2d5004f447-00-77gdosbqdpib_riker_replit_dev_login.png).
 
 ## How to reproduce
 

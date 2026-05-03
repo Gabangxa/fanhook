@@ -220,7 +220,15 @@ async function group1_sinkCreation() {
     assertEq(r.status, 401, 'status');
   });
 
-  tcDeferred('TC-1.7', 'Delete sink', 'no DELETE /api/sinks/:id endpoint implemented');
+  await tc('TC-1.7', 'Delete sink — DELETE /api/sinks/:id', async () => {
+    // Per spec: DELETE /api/sinks/:id should remove a sink. Endpoint is not
+    // implemented; this case fails until follow-up #12 lands.
+    const a = await createSink({ name: 'tc-1-7' });
+    const r = await req('DELETE', `/api/sinks/${a.sink_id}`, {
+      headers: { 'x-api-key': a.api_key },
+    });
+    assertEq(r.status, 204, 'status (endpoint not implemented — see follow-up #12)');
+  });
 }
 
 async function group2_apiKeyAuth() {
