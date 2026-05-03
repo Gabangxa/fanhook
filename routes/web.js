@@ -458,9 +458,12 @@ router.get('/providers/:slug', (req, res) => {
     res.status(404).setHeader('Content-Type', 'text/html');
     return res.send(`${HEAD('FanHook — Provider not found')}<nav class="topnav">${FH_LOGO}</nav><main class="landing-main"><h1 class="hero-title">Provider not found</h1><p class="hero-sub">We don't have a landing page for <code>${escAttr(slug)}</code>. <a href="/">Back to home</a>.</p></main>${FOOTER}${THEME_SCRIPT}</body></html>`);
   }
-  const exampleHost = (req.headers['x-forwarded-host'] || req.headers.host || 'fanhook.app').toString().split(',')[0].trim();
-  const exampleProto = (req.headers['x-forwarded-proto'] || 'https').toString().split(',')[0].trim();
-  const ingestUrl = `${exampleProto}://${exampleHost}/ingest/&lt;your-sink-id&gt;`;
+  const rawHost = (req.headers['x-forwarded-host'] || req.headers.host || 'fanhook.app').toString().split(',')[0].trim();
+  const rawProto = (req.headers['x-forwarded-proto'] || 'https').toString().split(',')[0].trim();
+  // Defensive: only allow conservative URL-safe chars before rendering into HTML.
+  const exampleHost = /^[A-Za-z0-9.\-:]+$/.test(rawHost) ? rawHost : 'fanhook.app';
+  const exampleProto = /^https?$/.test(rawProto) ? rawProto : 'https';
+  const ingestUrl = `${escAttr(exampleProto)}://${escAttr(exampleHost)}/ingest/&lt;your-sink-id&gt;`;
   const stepsHtml = page.setupSteps.map((s, i) =>
     `<div class="row-card" style="display:flex;gap:1rem;align-items:flex-start;">
        <div style="flex:0 0 2rem;height:2rem;border-radius:9999px;background:rgba(99,102,241,0.15);color:#6366f1;display:flex;align-items:center;justify-content:center;font-weight:700;">${i + 1}</div>
