@@ -69,6 +69,16 @@ The Node runner (`tests/run-core-tests.js`) talks to the live server on `PORT` (
 
 The `Start application` workflow runs with `FANHOOK_RETRY_DELAYS_MS=0,100,100` so retry-related tests finish in seconds. In production this env var is unset and `lib/fanout.js` falls back to its default `[0, 30s, 120s]` schedule.
 
+NATS + delivery-worker integration suite (requires `nats-server` on PATH; the runner spawns its own ephemeral JetStream server on a random port — no manual setup needed):
+
+```bash
+npm run test:nats
+```
+
+`tests/run-nats-tests.js` covers Group N (lib/nats.js: connect, stream/consumer setup, publish, publishToDLQ, listDLQMessages, deleteDLQMessage, publishStatusEvent) and Group W (workers/delivery.js processMessage cascade: success, no-routes-DLQ, transient-NAK, max-deliver-DLQ, already-delivered short-circuit, missing-event ack-to-discard). Each test has an 8s hard timeout to surface hangs as failures rather than blocking the suite.
+
+This suite revealed and fixed a defect in `lib/nats.js#listDLQMessages`: the OrderedConsumer `fetch()`/`consume()` path hangs indefinitely on nats-server 2.10 + nats.js 2.29. It now uses an ephemeral durable pull consumer (AckPolicy.None, filter_subject) which is deleted in the `finally` block — same external semantics, but reliable.
+
 Other endpoints/behaviors added or fixed for the suite:
 - `GET/POST /dashboard/api/sinks` — session-authed, per-user sink list and create (used by the dashboard UI; `/api/sinks` remains api-key-scoped). The POST is CSRF-protected via `auth.requireCsrf` and accepts the token in either an `X-CSRF-Token` header or a `_csrf` body field.
 - `requireAuth` accepts `Authorization: Bearer <key>` OR `X-Api-Key: <key>`.
