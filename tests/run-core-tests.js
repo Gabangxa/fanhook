@@ -630,6 +630,44 @@ async function group5_signatures() {
     const evt = db.prepare('SELECT COUNT(*) AS c FROM events WHERE sink_id = ?').get(a.sink_id);
     assertEq(evt.c, 0, 'no event stored');
   });
+
+  await tc('TC-5.14', 'Replayed Clerk webhook with stale svix-timestamp → 401', async () => {
+    const rawSecretBytes = crypto.randomBytes(24);
+    const secret = `whsec_${rawSecretBytes.toString('base64')}`;
+    const a = await createSink({ name: 'tc-5-14', provider: 'clerk', webhook_secret: secret });
+    await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: `${targetBase}/ok` },
+    });
+    const id = 'msg_5_14_replay';
+    // Stale timestamp: 10 minutes in the past — well outside the 300s default.
+    const staleTs = String(Math.floor(Date.now() / 1000) - 600);
+    const payload = JSON.stringify({ type: 'user.created', data: { id: 'u_replay' } });
+    const staleSig = clerkSig(payload, secret, id, staleTs);
+    const stale = await req('POST', `/ingest/${a.sink_id}`, {
+      headers: {
+        'content-type': 'application/json',
+        'svix-id': id, 'svix-timestamp': staleTs, 'svix-signature': staleSig,
+      },
+      body: payload, raw: true,
+    });
+    assertEq(stale.status, 401, 'stale status');
+    assert(/tolerance|replay/i.test(stale.body.error || ''), 'error mentions tolerance/replay');
+    const c1 = db.prepare('SELECT COUNT(*) AS c FROM events WHERE sink_id = ?').get(a.sink_id).c;
+    assertEq(c1, 0, 'no event stored for stale timestamp');
+
+    // Fresh timestamp using the same sink should succeed.
+    const freshId = 'msg_5_14_fresh';
+    const freshTs = String(Math.floor(Date.now() / 1000));
+    const freshSig = clerkSig(payload, secret, freshId, freshTs);
+    const fresh = await req('POST', `/ingest/${a.sink_id}`, {
+      headers: {
+        'content-type': 'application/json',
+        'svix-id': freshId, 'svix-timestamp': freshTs, 'svix-signature': freshSig,
+      },
+      body: payload, raw: true,
+    });
+    assertEq(fresh.status, 200, 'fresh status');
+  });
 }
 
 async function group6_fanout() {
