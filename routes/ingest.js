@@ -2,7 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { verifySignature } = require('../lib/verify');
-const { getMonthlyEventCount, getEventLimit } = require('../lib/metering');
+const { getMonthlyEventCount, getEventLimit, incrementMonthlyUsage } = require('../lib/metering');
 const natsLib = require('../lib/nats');
 const outbox = require('../lib/outbox');
 
@@ -70,6 +70,10 @@ router.post('/:sinkId', async (req, res) => {
       INSERT INTO events (id, sink_id, provider, payload, received_at, status)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(eventId, sinkId, sink.provider, payload, receivedAt, 'pending');
+
+    // Bump the monthly usage counter atomically with the event insert so the
+    // metering limit check never needs to COUNT the events table.
+    incrementMonthlyUsage(db, sinkId);
 
     if (routes.length > 0) {
       // Not yet due (two-phase handoff): the row only becomes eligible for

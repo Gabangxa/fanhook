@@ -116,6 +116,7 @@ function cleanFixtures() {
     db.prepare('DELETE FROM routes WHERE sink_id = ?').run(id);
     db.prepare('DELETE FROM dlq_entries WHERE sink_id = ?').run(id);
     db.prepare('DELETE FROM outbox WHERE sink_id = ?').run(id);
+    db.prepare('DELETE FROM monthly_usage WHERE sink_id = ?').run(id);
     db.prepare('DELETE FROM sinks WHERE id = ?').run(id);
   }
 }
@@ -813,39 +814,38 @@ async function group7_usageEnforcement() {
     assertEq(r.status, 200, 'status');
   });
 
+  // Metering now reads the pre-aggregated monthly_usage counter table, so the
+  // tests seed the counter directly instead of inserting thousands of raw
+  // event rows (spec amended with Task #18: indexes + metering counters).
+  function seedUsage(sinkId, count) {
+    const now = new Date();
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    db.prepare(
+      'INSERT INTO monthly_usage (sink_id, month, event_count) VALUES (?, ?, ?) ' +
+      'ON CONFLICT(sink_id, month) DO UPDATE SET event_count = excluded.event_count'
+    ).run(sinkId, monthKey, count);
+  }
+
   await tc('TC-7.2', 'Free tier — 1001st event blocked → 429', async () => {
     const a = await createSink({ name: 'tc-7-2' });
-    // Seed 1000 events for this calendar month
-    const insert = db.prepare(
-      'INSERT INTO events (id, sink_id, provider, payload, received_at, status) VALUES (?, ?, ?, ?, ?, ?)'
-    );
-    const now = new Date().toISOString();
-    db.transaction(() => {
-      for (let i = 0; i < 1000; i++) {
-        insert.run(`seed_${a.sink_id}_${i}`, a.sink_id, 'generic', '{"seed":true}', now, 'delivered');
-      }
-    })();
+    seedUsage(a.sink_id, 1000);
     const r = await req('POST', `/ingest/${a.sink_id}`, {
       headers: { 'content-type': 'application/json' }, body: { hi: '7.2' },
     });
     assertEq(r.status, 429, 'status');
     assert(/limit/i.test(r.body.error), 'error mentions limit');
     const c = db.prepare('SELECT COUNT(*) AS c FROM events WHERE sink_id = ?').get(a.sink_id).c;
-    assertEq(c, 1000, 'no new event row created');
+    assertEq(c, 0, 'no new event row created');
+    const usage = db.prepare(
+      'SELECT event_count FROM monthly_usage WHERE sink_id = ?'
+    ).get(a.sink_id);
+    assertEq(usage.event_count, 1000, 'counter not bumped by the rejected request');
   });
 
   await tc('TC-7.3', 'Starter tier — ingest allowed above 1000', async () => {
     const a = await createSink({ name: 'tc-7-3' });
     db.prepare("UPDATE sinks SET tier = 'starter' WHERE id = ?").run(a.sink_id);
-    const insert = db.prepare(
-      'INSERT INTO events (id, sink_id, provider, payload, received_at, status) VALUES (?, ?, ?, ?, ?, ?)'
-    );
-    const now = new Date().toISOString();
-    db.transaction(() => {
-      for (let i = 0; i < 1100; i++) {
-        insert.run(`seed_${a.sink_id}_${i}`, a.sink_id, 'generic', '{"seed":true}', now, 'delivered');
-      }
-    })();
+    seedUsage(a.sink_id, 1100);
     await req('POST', `/api/sinks/${a.sink_id}/routes`, {
       headers: { 'x-api-key': a.api_key }, body: { url: `${targetBase}/ok` },
     });
@@ -853,6 +853,46 @@ async function group7_usageEnforcement() {
       headers: { 'content-type': 'application/json' }, body: { hi: '7.3' },
     });
     assertEq(r.status, 200, 'status');
+    const usage = db.prepare('SELECT event_count FROM monthly_usage WHERE sink_id = ?').get(a.sink_id);
+    assertEq(usage.event_count, 1101, 'counter incremented with the accepted event');
+  });
+
+  await tc('TC-7.4', 'Counter stays in sync with events across ingest and redrive', async () => {
+    target.reset();
+    const a = await createSink({ name: 'tc-7-4' });
+    await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: `${targetBase}/ok` },
+    });
+
+    // Three normal ingests
+    for (let i = 0; i < 3; i++) {
+      const r = await req('POST', `/ingest/${a.sink_id}`, {
+        headers: { 'content-type': 'application/json' }, body: { i },
+      });
+      assertEq(r.status, 200, `ingest ${i} status`);
+    }
+
+    // One redrive: seed a DLQ entry directly and redrive it via the API
+    const dlqEventId = `tc74_dlq_${crypto.randomBytes(4).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO dlq_entries (event_id, sink_id, raw_body_b64, headers, provider, failed_at, attempt_count, failure_reason)
+      VALUES (?, ?, ?, '{}', 'generic', ?, 3, 'max_deliver_exceeded')
+    `).run(dlqEventId, a.sink_id, Buffer.from('{"redrive":true}').toString('base64'), new Date().toISOString());
+    const rd = await req('POST', `/api/sinks/${a.sink_id}/dlq/${dlqEventId}/redrive`, {
+      headers: { 'x-api-key': a.api_key },
+    });
+    assertEq(rd.status, 200, 'redrive status');
+    assert(rd.body.redriven, 'redriven flag');
+
+    const eventCount = db.prepare('SELECT COUNT(*) AS c FROM events WHERE sink_id = ?').get(a.sink_id).c;
+    const usage = db.prepare('SELECT event_count FROM monthly_usage WHERE sink_id = ?').get(a.sink_id);
+    assertEq(eventCount, 4, 'four event rows (3 ingests + 1 redrive)');
+    assertEq(usage.event_count, 4, 'counter matches events table exactly');
+
+    // Billing status endpoint reports the same number
+    const bs = await req('GET', '/api/billing/status', { headers: { 'x-api-key': a.api_key } });
+    assertEq(bs.status, 200, 'billing status');
+    assertEq(bs.body.events_this_month, 4, 'billing status reads the counter');
   });
 }
 

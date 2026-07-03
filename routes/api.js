@@ -1,7 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
-const { getMonthlyEventCount, getEventLimit } = require('../lib/metering');
+const { getMonthlyEventCount, getEventLimit, incrementMonthlyUsage } = require('../lib/metering');
 const natsLib = require('../lib/nats');
 const outbox = require('../lib/outbox');
 
@@ -173,6 +173,8 @@ router.delete('/sinks/:sinkId', requireSinkAuth, (req, res) => {
     db.prepare('DELETE FROM events WHERE sink_id = ?').run(sinkId);
     db.prepare('DELETE FROM routes WHERE sink_id = ?').run(sinkId);
     db.prepare('DELETE FROM dlq_entries WHERE sink_id = ?').run(sinkId);
+    db.prepare('DELETE FROM outbox WHERE sink_id = ?').run(sinkId);
+    db.prepare('DELETE FROM monthly_usage WHERE sink_id = ?').run(sinkId);
     db.prepare('DELETE FROM sinks WHERE id = ?').run(sinkId);
   })();
   return res.status(204).send();
@@ -293,11 +295,16 @@ router.post('/sinks/:sinkId/dlq/:eventId/redrive', requireSinkAuth, async (req, 
   try { originalHeaders = JSON.parse(entry.headers || '{}'); } catch (_) {}
   const payload = rawBody.toString('utf8') || '{}';
 
-  // Create a fresh event record so the redriven delivery appears in the event log
-  db.prepare(`
-    INSERT INTO events (id, sink_id, provider, payload, received_at, status)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(newEventId, sinkId, entry.provider || sink.provider, payload, receivedAt, 'pending');
+  // Create a fresh event record so the redriven delivery appears in the event
+  // log. Counter bumped in the same transaction — every event-insert path must
+  // keep monthly_usage in sync.
+  db.transaction(() => {
+    db.prepare(`
+      INSERT INTO events (id, sink_id, provider, payload, received_at, status)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(newEventId, sinkId, entry.provider || sink.provider, payload, receivedAt, 'pending');
+    incrementMonthlyUsage(db, sinkId);
+  })();
 
   // Dispatch the redriven event via NATS (preferred) or direct fanout (fallback).
   // We only commit the DLQ entry as redriven after dispatch is confirmed so that

@@ -110,6 +110,26 @@ for (const col of [
   try { db.exec(col); } catch (_) { /* column already exists */ }
 }
 
+// ---------------------------------------------------------------------------
+// Data-path scaling: hot-path indexes + pre-aggregated monthly usage counters.
+// Created after the ALTER migrations above so columns like sinks.user_id exist.
+// ---------------------------------------------------------------------------
+db.exec(`
+  CREATE TABLE IF NOT EXISTS monthly_usage (
+    sink_id TEXT NOT NULL,
+    month TEXT NOT NULL,
+    event_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (sink_id, month)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sinks_api_key ON sinks(api_key);
+  CREATE INDEX IF NOT EXISTS idx_sinks_user_id ON sinks(user_id);
+  CREATE INDEX IF NOT EXISTS idx_routes_sink_id ON routes(sink_id);
+  CREATE INDEX IF NOT EXISTS idx_events_sink_received ON events(sink_id, received_at);
+  CREATE INDEX IF NOT EXISTS idx_delivery_attempts_event_id ON delivery_attempts(event_id);
+  CREATE INDEX IF NOT EXISTS idx_dlq_entries_sink_redriven_at ON dlq_entries(sink_id, redriven_at);
+`);
+
 // Seed demo data if not already present
 const existingSink = db.prepare('SELECT id FROM sinks WHERE id = ?').get('demo_sink_1');
 
@@ -187,6 +207,23 @@ if (!existingSink) {
     );
   }
 
+}
+
+// ---------------------------------------------------------------------------
+// Monthly usage counter backfill — runs on every startup, but INSERT OR IGNORE
+// makes it a one-time seed per (sink, month): once a counter row exists (from
+// backfill or from ingest increments) it is never overwritten. This makes
+// current-month usage accurate immediately after the migration, including for
+// the demo sink seeded above.
+// ---------------------------------------------------------------------------
+{
+  const now = new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  db.prepare(`
+    INSERT OR IGNORE INTO monthly_usage (sink_id, month, event_count)
+    SELECT sink_id, ?, COUNT(*) FROM events WHERE received_at >= ? GROUP BY sink_id
+  `).run(monthKey, monthStart);
 }
 
 module.exports = db;
