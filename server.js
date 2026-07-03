@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const { fork } = require('child_process');
 const natsLib = require('./lib/nats');
+const outbox = require('./lib/outbox');
 
 // Initialize DB (creates tables and seeds demo data on first run)
 const db = require('./db');
@@ -97,6 +98,7 @@ function spawnDeliveryWorker() {
 // ---------------------------------------------------------------------------
 async function shutdown(signal) {
   console.log(`[server] ${signal} received — shutting down`);
+  outbox.stopSweeper();
   if (deliveryWorker) {
     deliveryWorker.kill('SIGTERM');
   }
@@ -113,6 +115,9 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`FanHook listening on port ${PORT}`);
   spawnDeliveryWorker();
+  // Durable outbox sweeper: delivers events NATS couldn't accept and recovers
+  // events stuck in 'pending' after a crash.
+  outbox.startSweeper(db);
 });
 
 module.exports = app;

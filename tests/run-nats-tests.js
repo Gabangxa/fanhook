@@ -82,7 +82,7 @@ function killNats() {
 
 // natsLib, db, and the worker harness are loaded after bootNats() in main(),
 // so that lib/nats.js captures the right NATS_URL at module load.
-let natsLib, db, processMessage;
+let natsLib, db, processMessage, runConsumeLoop;
 function loadModulesUnderTest() {
   natsLib = require(path.join(__dirname, '..', 'lib', 'nats'));
   db = require(path.join(__dirname, '..', 'db'));
@@ -95,12 +95,13 @@ function loadModulesUnderTest() {
     .replace(/startWorker\(\)\.catch\([\s\S]*?\}\);\s*$/m, '')
     .replace(/process\.on\('SIGTERM'[\s\S]*?\}\);\s*/g, '')
     .replace(/process\.on\('SIGINT'[\s\S]*?\}\);\s*/g, '')
-    + '\nmodule.exports = { processMessage, writeToDLQ };\n';
+    + '\nmodule.exports = { processMessage, writeToDLQ, runConsumeLoop };\n';
   const workerMod = new Module(path.join(__dirname, '..', 'workers', 'delivery.harness.js'));
   workerMod.filename = path.join(__dirname, '..', 'workers', 'delivery.harness.js');
   workerMod.paths = Module._nodeModulePaths(workerMod.filename);
   workerMod._compile(sanitized, workerMod.filename);
   processMessage = workerMod.exports.processMessage;
+  runConsumeLoop = workerMod.exports.runConsumeLoop;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,8 +148,12 @@ function startTarget() {
       req.on('data', (c) => (body += c));
       req.on('end', () => {
         targetHits.push({ url: req.url, headers: req.headers, body });
-        res.statusCode = nextStatus;
-        res.end('ok');
+        // /slow* paths simulate a stalled destination (2s before responding)
+        const delay = req.url.startsWith('/slow') ? 2000 : 0;
+        setTimeout(() => {
+          res.statusCode = nextStatus;
+          res.end('ok');
+        }, delay);
       });
     });
     targetServer.listen(0, '127.0.0.1', () => {
@@ -384,6 +389,61 @@ async function group_worker() {
     const msg = fakeMsg({ eventId: 'natstest_missing_xyz', sinkId: 'natstest_no' });
     await processMessage(msg);
     assert(msg._state().acked, 'acked');
+  });
+
+  await tc('TC-W.7', 'Concurrent consume: slow destination does not block other sinks', async () => {
+    nextStatus = 200; targetHits.length = 0;
+    const slow = makeSink({ routes: [`${targetBase}/slow-w7`] });
+    const fast = makeSink({ routes: [`${targetBase}/ok-w7`] });
+    const slowEventId = makeEvent(slow.sinkId);
+    const fastEventId = makeEvent(fast.sinkId);
+    const slowMsg = fakeMsg({ eventId: slowEventId, sinkId: slow.sinkId, rawBodyB64: Buffer.from('{"s":1}').toString('base64') });
+    const fastMsg = fakeMsg({ eventId: fastEventId, sinkId: fast.sinkId, rawBodyB64: Buffer.from('{"f":1}').toString('base64') });
+
+    async function* gen() { yield slowMsg; yield fastMsg; }
+    const loopDone = runConsumeLoop(gen(), { concurrency: 4 });
+
+    // The fast event must be delivered while the slow one (2s destination
+    // delay) is still in flight. A serial loop would take >2s to reach it.
+    const deadline = Date.now() + 1500;
+    let fastDeliveredEarly = false;
+    while (Date.now() < deadline) {
+      const f = db.prepare('SELECT status FROM events WHERE id = ?').get(fastEventId);
+      if (f && f.status === 'delivered') {
+        const s = db.prepare('SELECT status FROM events WHERE id = ?').get(slowEventId);
+        assert(s.status !== 'delivered', 'slow event still in flight when fast one finished');
+        fastDeliveredEarly = true;
+        break;
+      }
+      await sleep(50);
+    }
+    assert(fastDeliveredEarly, 'fast event delivered while slow destination was stalling');
+
+    await loopDone;
+    assert(slowMsg._state().acked, 'slow msg eventually acked');
+    assert(fastMsg._state().acked, 'fast msg acked');
+    const s = db.prepare('SELECT status FROM events WHERE id = ?').get(slowEventId);
+    assertEq(s.status, 'delivered', 'slow event delivered after stall');
+  });
+
+  await tc('TC-W.8', 'Concurrency cap respected and duplicate in-flight events deferred', async () => {
+    let active = 0; let maxActive = 0; let handled = 0;
+    const handler = async () => {
+      active += 1; maxActive = Math.max(maxActive, active);
+      await sleep(100);
+      handled += 1; active -= 1;
+    };
+    const msgs = [];
+    for (let i = 0; i < 6; i++) {
+      msgs.push(fakeMsg({ eventId: `natstest_cap_${i}`, sinkId: 'natstest_cap_sink' }));
+    }
+    // Duplicate of an in-flight event — must be naked, not double-processed
+    const dup = fakeMsg({ eventId: 'natstest_cap_0', sinkId: 'natstest_cap_sink' });
+    async function* gen() { yield msgs[0]; yield dup; for (const m of msgs.slice(1)) yield m; }
+    await runConsumeLoop(gen(), { concurrency: 2, handler });
+    assertEq(maxActive, 2, 'max concurrent handlers');
+    assertEq(handled, 6, 'all six unique messages handled');
+    assertEq(dup._state().naked, 1000, 'duplicate in-flight event naked with 1s delay');
   });
 }
 

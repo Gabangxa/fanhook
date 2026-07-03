@@ -5,6 +5,9 @@ const db = new Database(path.join(__dirname, 'fanhook.db'));
 
 // Enable WAL mode for better performance
 db.pragma('journal_mode = WAL');
+// Multiple processes (server + delivery worker) write concurrently — wait for
+// locks instead of failing immediately with SQLITE_BUSY.
+db.pragma('busy_timeout = 5000');
 
 // ---------------------------------------------------------------------------
 // Schema migrations — safe to run on every startup
@@ -80,6 +83,18 @@ db.exec(`
     redriven_at TEXT,
     new_event_id TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS outbox (
+    event_id TEXT PRIMARY KEY,
+    sink_id TEXT NOT NULL,
+    raw_body_b64 TEXT NOT NULL,
+    headers TEXT NOT NULL DEFAULT '{}',
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_outbox_next_attempt_at ON outbox(next_attempt_at);
 `);
 
 // Idempotent migrations — safe to run on every startup

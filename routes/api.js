@@ -2,8 +2,8 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { getMonthlyEventCount, getEventLimit } = require('../lib/metering');
-const { fanout } = require('../lib/fanout');
 const natsLib = require('../lib/nats');
+const outbox = require('../lib/outbox');
 
 const router = express.Router();
 
@@ -312,9 +312,15 @@ router.post('/sinks/:sinkId/dlq/:eventId/redrive', requireSinkAuth, async (req, 
     });
     dispatchOk = true;
   } catch (_) {
-    // NATS unavailable — fall back to in-process fanout (fire-and-forget)
-    fanout(db, newEventId, routes, rawBody, originalHeaders).catch(() => {});
-    dispatchOk = true; // fanout initiated; treat as confirmed
+    // NATS unavailable — enqueue durably in the outbox; the sweeper delivers it
+    outbox.enqueue(db, {
+      eventId: newEventId,
+      sinkId,
+      rawBodyB64: entry.raw_body_b64 || '',
+      headers: originalHeaders,
+    });
+    outbox.notify();
+    dispatchOk = true; // durably enqueued; treat as confirmed
   }
 
   if (!dispatchOk) {

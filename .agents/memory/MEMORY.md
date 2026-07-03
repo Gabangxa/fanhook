@@ -1,0 +1,1 @@
+- [Outbox two-phase handoff](outbox-two-phase-handoff.md) — outbox rows are inserted not-yet-due during NATS publish; arm on failure, remove on success. Never make rows due immediately or the sweeper races the NATS worker.

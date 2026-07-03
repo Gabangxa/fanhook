@@ -115,6 +115,7 @@ function cleanFixtures() {
     db.prepare('DELETE FROM events WHERE sink_id = ?').run(id);
     db.prepare('DELETE FROM routes WHERE sink_id = ?').run(id);
     db.prepare('DELETE FROM dlq_entries WHERE sink_id = ?').run(id);
+    db.prepare('DELETE FROM outbox WHERE sink_id = ?').run(id);
     db.prepare('DELETE FROM sinks WHERE id = ?').run(id);
   }
 }
@@ -126,6 +127,10 @@ async function createSink({ name, provider = 'generic', webhook_secret = null })
   const r = await req('POST', '/api/sinks', { body });
   if (r.status !== 201) throw new Error(`createSink failed: ${r.status} ${r.text}`);
   return r.body; // { sink_id, ingest_url, api_key, webhook_secret }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function pollUntil(predicate, { timeoutMs = 5000, intervalMs = 100 } = {}) {
@@ -698,7 +703,12 @@ async function group6_fanout() {
     assert(attempts.every((a) => a.http_status === 200), 'all 200');
   });
 
-  await tc('TC-6.2', 'Failed delivery retried 3 times', async () => {
+  await tc('TC-6.2', 'Failed delivery retried with NATS-parity schedule, then DLQ (spec amended)', async () => {
+    // SPEC AMENDED: The NATS-unavailable path now uses the durable outbox
+    // sweeper, which mirrors the NATS worker: 3 outer attempts, each running
+    // the in-process fanout retry schedule (3 tries) → 9 attempts total, then
+    // the event is written to the DLQ. Previously the fallback did a single
+    // fire-and-forget fanout (3 attempts, no DLQ).
     target.reset();
     target.setResponse('/fail', 503);
     const a = await createSink({ name: 'tc-6-2' });
@@ -709,14 +719,20 @@ async function group6_fanout() {
       headers: { 'content-type': 'application/json' }, body: { hi: '6.2' },
     });
     const eventId = ing.body.event_id;
+    // Wait for terminal state: DLQ row written after all outer attempts exhaust
     await pollUntil(() => {
       const e = db.prepare('SELECT status FROM events WHERE id = ?').get(eventId);
-      return e && e.status === 'failed';
-    }, { timeoutMs: 5000 });
+      const d = db.prepare('SELECT * FROM dlq_entries WHERE event_id = ?').get(eventId);
+      return e && e.status === 'failed' && d;
+    }, { timeoutMs: 8000 });
     const attempts = db.prepare('SELECT * FROM delivery_attempts WHERE event_id = ?').all(eventId);
-    assertEq(attempts.length, 3, 'three attempts');
+    assertEq(attempts.length, 9, 'nine attempts (3 outer × 3 in-process)');
     assert(attempts.every((a) => a.status === 'failed'), 'all failed');
     assert(attempts.every((a) => a.http_status === 503), 'all 503');
+    const dlq = db.prepare('SELECT * FROM dlq_entries WHERE event_id = ?').get(eventId);
+    assertEq(dlq.failure_reason, 'max_deliver_exceeded', 'DLQ reason');
+    const ob = db.prepare('SELECT * FROM outbox WHERE event_id = ?').get(eventId);
+    assert(!ob, 'outbox row removed after exhaustion');
   });
 
   await tc('TC-6.3', 'Mixed delivery — one success, one failure', async () => {
@@ -840,6 +856,120 @@ async function group7_usageEnforcement() {
   });
 }
 
+async function group8_outbox() {
+  console.log('\n# Group 8 — Durable Outbox (NATS-unavailable path)');
+
+  await tc('TC-8.1', 'Outbox fallback delivers durably and cleans up its row', async () => {
+    target.reset();
+    const a = await createSink({ name: 'tc-8-1' });
+    await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: `${targetBase}/outbox-ok` },
+    });
+    const ing = await req('POST', `/ingest/${a.sink_id}`, {
+      headers: { 'content-type': 'application/json' }, body: { hi: '8.1' },
+    });
+    assertEq(ing.status, 200, 'ingest status');
+    assertEq(ing.body.delivery_mode, 'outbox', 'delivery_mode is outbox when NATS is down');
+    const eventId = ing.body.event_id;
+    await pollUntil(() => {
+      const e = db.prepare('SELECT status FROM events WHERE id = ?').get(eventId);
+      return e && e.status === 'delivered';
+    }, { timeoutMs: 5000 });
+    assert(target.hits['/outbox-ok']?.length === 1, 'destination hit once');
+    const ob = db.prepare('SELECT * FROM outbox WHERE event_id = ?').get(eventId);
+    assert(!ob, 'outbox row removed after delivery');
+  });
+
+  await tc('TC-8.2', 'Original headers preserved through the outbox path', async () => {
+    target.reset();
+    const a = await createSink({ name: 'tc-8-2' });
+    await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: `${targetBase}/outbox-hdrs` },
+    });
+    const ing = await req('POST', `/ingest/${a.sink_id}`, {
+      headers: { 'content-type': 'application/json', 'x-custom-header': 'tc82-value' },
+      body: { hi: '8.2' },
+    });
+    const eventId = ing.body.event_id;
+    await pollUntil(() => {
+      const e = db.prepare('SELECT status FROM events WHERE id = ?').get(eventId);
+      return e && e.status === 'delivered';
+    }, { timeoutMs: 5000 });
+    const hit = target.hits['/outbox-hdrs']?.[0];
+    assert(hit, 'destination hit');
+    assertEq(hit.body, JSON.stringify({ hi: '8.2' }), 'raw body forwarded byte-for-byte');
+  });
+
+  await tc('TC-8.3', 'Crash recovery — stale pending event is re-driven automatically', async () => {
+    // Simulates an event whose delivery was lost (e.g. process crash before
+    // dispatch): a 'pending' event older than FANHOOK_PENDING_GRACE_MS with no
+    // outbox row. The sweeper must pick it up and deliver it.
+    target.reset();
+    const a = await createSink({ name: 'tc-8-3' });
+    await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: `${targetBase}/recovered` },
+    });
+    const eventId = `tc83_${crypto.randomBytes(4).toString('hex')}`;
+    const staleTs = new Date(Date.now() - 60_000).toISOString(); // beyond any grace window used in tests
+    db.prepare(
+      'INSERT INTO events (id, sink_id, provider, payload, received_at, status) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(eventId, a.sink_id, 'generic', JSON.stringify({ recovered: true }), staleTs, 'pending');
+    await pollUntil(() => {
+      const e = db.prepare('SELECT status FROM events WHERE id = ?').get(eventId);
+      return e && e.status === 'delivered';
+    }, { timeoutMs: 8000 });
+    assert(target.hits['/recovered']?.length >= 1, 'destination received recovered event');
+    const ob = db.prepare('SELECT * FROM outbox WHERE event_id = ?').get(eventId);
+    assert(!ob, 'outbox row cleaned up after recovery delivery');
+  });
+
+  await tc('TC-8.5', 'Two-phase handoff — unarmed outbox row is not swept early, armed row is', async () => {
+    // Invariant: exactly one delivery owner at a time. While a NATS publish is
+    // in flight the outbox row exists but is NOT due (next_attempt_at in the
+    // future); the sweeper must leave it alone. Once armed (publish failed),
+    // the sweeper delivers it.
+    target.reset();
+    const a = await createSink({ name: 'tc-8-5' });
+    await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: `${targetBase}/handoff` },
+    });
+    const eventId = `tc85_${crypto.randomBytes(4).toString('hex')}`;
+    db.prepare(
+      'INSERT INTO events (id, sink_id, provider, payload, received_at, status) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(eventId, a.sink_id, 'generic', '{"h":1}', new Date().toISOString(), 'pending');
+    // Simulate the in-flight handoff: outbox row present but not yet due
+    db.prepare(
+      "INSERT INTO outbox (event_id, sink_id, raw_body_b64, headers, attempt_count, next_attempt_at, created_at) VALUES (?, ?, ?, '{}', 0, ?, ?)"
+    ).run(eventId, a.sink_id, Buffer.from('{"h":1}').toString('base64'), Date.now() + 60_000, new Date().toISOString());
+
+    // Several sweep intervals pass (dev sweep = 200ms) — must NOT be delivered
+    await sleep(700);
+    assert(!target.hits['/handoff'], 'unarmed row not delivered by sweeper');
+    const e1 = db.prepare('SELECT status FROM events WHERE id = ?').get(eventId);
+    assertEq(e1.status, 'pending', 'event still pending while unarmed');
+
+    // Arm the row (simulates NATS publish failure) → sweeper delivers it
+    db.prepare('UPDATE outbox SET next_attempt_at = ? WHERE event_id = ?').run(Date.now(), eventId);
+    await pollUntil(() => {
+      const e = db.prepare('SELECT status FROM events WHERE id = ?').get(eventId);
+      return e && e.status === 'delivered';
+    }, { timeoutMs: 5000 });
+    assert(target.hits['/handoff']?.length === 1, 'delivered exactly once after arming');
+    const ob = db.prepare('SELECT * FROM outbox WHERE event_id = ?').get(eventId);
+    assert(!ob, 'outbox row removed after delivery');
+  });
+
+  await tc('TC-8.4', 'Demo seed events are never re-driven by recovery', async () => {
+    const demo = db.prepare("SELECT id, status FROM events WHERE id LIKE 'demo_event_%' AND status = 'pending'").all();
+    // demo_event_4 is seeded as pending on fresh DBs; it must stay untouched.
+    for (const d of demo) {
+      const ob = db.prepare('SELECT * FROM outbox WHERE event_id = ?').get(d.id);
+      assert(!ob, `demo event ${d.id} must not be enqueued in outbox`);
+    }
+    return `${demo.length} pending demo event(s) left untouched`;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -866,6 +996,7 @@ async function main() {
     await group5_signatures();
     await group6_fanout();
     await group7_usageEnforcement();
+    await group8_outbox();
     await group_dashboardCsrf();
   } finally {
     cleanFixtures();

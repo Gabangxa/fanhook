@@ -18,49 +18,20 @@ const path = require('path');
 const db = require(path.join(__dirname, '..', 'db'));
 const { fanout } = require(path.join(__dirname, '..', 'lib', 'fanout'));
 const natsLib = require(path.join(__dirname, '..', 'lib', 'nats'));
+const dlqLib = require(path.join(__dirname, '..', 'lib', 'dlq'));
 
 const NAK_DELAY_MS = 30_000;
 
-async function writeToDLQ(eventId, sinkId, provider, rawBodyB64, headers, attemptCount, failureReason) {
-  const failedAt = new Date().toISOString();
+// Number of messages processed concurrently. A slow or hanging destination
+// only occupies one slot instead of blocking the whole consume loop.
+const WORKER_CONCURRENCY = (() => {
+  const n = parseInt(process.env.FANHOOK_WORKER_CONCURRENCY || '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 10;
+})();
 
-  // Write to SQLite for raw-body storage (used by redrive endpoint)
-  db.prepare(`
-    INSERT OR IGNORE INTO dlq_entries
-      (event_id, sink_id, raw_body_b64, headers, provider, failed_at, attempt_count, failure_reason)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    eventId,
-    sinkId,
-    rawBodyB64 || '',
-    JSON.stringify(headers || {}),
-    provider || null,
-    failedAt,
-    attemptCount,
-    failureReason || null
-  );
-
-  // Publish to NATS DLQ stream (primary store for list endpoint).
-  // Store the returned stream sequence in SQLite so the redrive endpoint can
-  // delete this specific message from the stream later.
-  try {
-    const pubAck = await natsLib.publishToDLQ(sinkId, {
-      event_id: eventId,
-      sink_id: sinkId,
-      payload: rawBodyB64 || '',
-      headers: headers || {},
-      failed_at: failedAt,
-      attempt_count: attemptCount,
-      failure_reason: failureReason || null,
-    });
-    if (pubAck && pubAck.seq) {
-      db.prepare('UPDATE dlq_entries SET nats_seq = ? WHERE event_id = ?').run(pubAck.seq, eventId);
-    }
-  } catch (_) {
-    // NATS DLQ publish failure is non-fatal — redrive still works via SQLite
-  }
-
-  console.warn(`[delivery] Event ${eventId} written to DLQ (${attemptCount} attempts, reason: ${failureReason})`);
+// DLQ write logic is shared with the durable outbox sweeper (lib/dlq.js)
+function writeToDLQ(eventId, sinkId, provider, rawBodyB64, headers, attemptCount, failureReason) {
+  return dlqLib.writeToDLQ(db, eventId, sinkId, provider, rawBodyB64, headers, attemptCount, failureReason);
 }
 
 async function processMessage(msg) {
@@ -173,6 +144,73 @@ async function processMessage(msg) {
   }
 }
 
+/**
+ * Bounded-concurrency consume pump.
+ *
+ * Pulls messages from the (async-iterable) JetStream consumer and processes up
+ * to `concurrency` of them in parallel. Messages for an event that is already
+ * in flight are naked briefly instead of being processed twice concurrently.
+ *
+ * Exposed with an injectable handler so tests can drive it with fake message
+ * iterables.
+ */
+async function runConsumeLoop(messages, { concurrency = WORKER_CONCURRENCY, handler = processMessage } = {}) {
+  let active = 0;
+  const waiters = [];
+  const inFlightEvents = new Set();
+  const pending = new Set();
+
+  const acquire = () => new Promise((resolve) => {
+    if (active < concurrency) {
+      active += 1;
+      resolve();
+    } else {
+      waiters.push(() => {
+        active += 1;
+        resolve();
+      });
+    }
+  });
+  const release = () => {
+    active -= 1;
+    const next = waiters.shift();
+    if (next) next();
+  };
+
+  for await (const msg of messages) {
+    await acquire();
+
+    let eventId = null;
+    try {
+      eventId = natsLib.jc.decode(msg.data).eventId || null;
+    } catch (_) {
+      // Undecodable payloads are handled (acked) inside processMessage
+    }
+
+    if (eventId && inFlightEvents.has(eventId)) {
+      // Same event already being processed — defer this redelivery briefly
+      try { msg.nak(1_000); } catch (_) {}
+      release();
+      continue;
+    }
+    if (eventId) inFlightEvents.add(eventId);
+
+    const p = Promise.resolve()
+      .then(() => handler(msg))
+      .catch((err) => {
+        console.error('[delivery] processMessage error:', err && err.message ? err.message : err);
+      })
+      .finally(() => {
+        if (eventId) inFlightEvents.delete(eventId);
+        pending.delete(p);
+        release();
+      });
+    pending.add(p);
+  }
+
+  await Promise.allSettled([...pending]);
+}
+
 async function startWorker() {
   console.log(`[delivery] Starting — connecting to NATS at ${natsLib.NATS_URL}`);
 
@@ -192,9 +230,8 @@ async function startWorker() {
     const consumer = await js.consumers.get(natsLib.STREAM_NAME, 'delivery-worker');
     const messages = await consumer.consume();
 
-    for await (const msg of messages) {
-      await processMessage(msg);
-    }
+    console.log(`[delivery] Consuming with concurrency ${WORKER_CONCURRENCY}`);
+    await runConsumeLoop(messages);
   } catch (err) {
     // Unexpected runtime error — exit with non-zero so server.js restarts us
     console.error('[delivery] Worker runtime error:', err.message);
