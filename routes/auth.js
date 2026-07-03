@@ -147,10 +147,12 @@ router.post('/signup', auth.requireCsrf, (req, res) => {
 
     const sinkId = uuidv4();
     const apiKey = uuidv4();
+    const { hashApiKey } = require('../lib/apikeys');
+    // Only the hash is persisted — plaintext keys are never stored.
     db.prepare(`
       INSERT INTO sinks (id, name, provider, api_key, created_at, user_id)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(sinkId, 'My first sink', 'generic', apiKey, now, userId);
+    `).run(sinkId, 'My first sink', 'generic', hashApiKey(apiKey), now, userId);
   });
 
   try {

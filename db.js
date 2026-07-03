@@ -210,6 +210,25 @@ if (!existingSink) {
 }
 
 // ---------------------------------------------------------------------------
+// API key hashing migration — idempotent, runs on every startup (after the
+// demo seed above so a freshly seeded demo key is hashed too). Any sink whose
+// api_key is still plaintext is rewritten as sha256$<hex>. Lookups go through
+// lib/apikeys.findSinkByApiKey which hashes the presented token.
+// ---------------------------------------------------------------------------
+{
+  const { hashApiKey, isHashedApiKey } = require('./lib/apikeys');
+  const rows = db.prepare('SELECT id, api_key FROM sinks').all();
+  const update = db.prepare('UPDATE sinks SET api_key = ? WHERE id = ?');
+  db.transaction(() => {
+    for (const row of rows) {
+      if (!isHashedApiKey(row.api_key)) {
+        update.run(hashApiKey(row.api_key), row.id);
+      }
+    }
+  })();
+}
+
+// ---------------------------------------------------------------------------
 // Monthly usage counter backfill — runs on every startup, but INSERT OR IGNORE
 // makes it a one-time seed per (sink, month): once a counter row exists (from
 // backfill or from ingest increments) it is never overwritten. This makes

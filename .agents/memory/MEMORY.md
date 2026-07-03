@@ -1,1 +1,2 @@
 - [Outbox two-phase handoff](outbox-two-phase-handoff.md) — outbox rows are inserted not-yet-due during NATS publish; arm on failure, remove on success. Never make rows due immediately or the sweeper races the NATS worker.
+- [SSRF guard env policy](ssrf-guard-env.md) — dev/test processes delivering to 127.0.0.1 must set FANHOOK_ALLOW_PRIVATE_DESTINATIONS=loopback; sinks.api_key stores sha256$ digests only.

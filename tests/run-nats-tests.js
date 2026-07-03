@@ -26,6 +26,11 @@ const fsBoot = require('fs');
 // Speed up fanout retries (also picked up by the live worker if restarted)
 process.env.FANHOOK_RETRY_DELAYS_MS = process.env.FANHOOK_RETRY_DELAYS_MS || '0,50,50';
 
+// The in-process processMessage tests deliver to 127.0.0.1 targets; run this
+// test process under the loopback SSRF policy — same as the dev server.
+process.env.FANHOOK_ALLOW_PRIVATE_DESTINATIONS =
+  process.env.FANHOOK_ALLOW_PRIVATE_DESTINATIONS || 'loopback';
+
 // ---------------------------------------------------------------------------
 // Boot a private nats-server (JetStream) on an ephemeral port so this test
 // is self-contained. The Replit workflow framework polls HTTP, which NATS

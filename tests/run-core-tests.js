@@ -13,10 +13,17 @@
  * Exits 0 when all in-scope cases pass, non-zero otherwise.
  */
 
+// The in-process SSRF/fanout tests (Group 9) deliver to 127.0.0.1 targets, so
+// run this test process under the loopback policy — same as the dev server.
+process.env.FANHOOK_ALLOW_PRIVATE_DESTINATIONS =
+  process.env.FANHOOK_ALLOW_PRIVATE_DESTINATIONS || 'loopback';
+
 const http = require('http');
 const crypto = require('crypto');
 const path = require('path');
 const Database = require('better-sqlite3');
+const ssrf = require('../lib/ssrf');
+const { fanout } = require('../lib/fanout');
 
 const BASE = process.env.FANHOOK_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
 const DB_PATH = path.join(__dirname, '..', 'fanhook.db');
@@ -1011,6 +1018,187 @@ async function group8_outbox() {
 }
 
 // ---------------------------------------------------------------------------
+// Group 9 — Security hardening: SSRF guard, hashed API keys, SSE auth
+// ---------------------------------------------------------------------------
+async function group9_security() {
+  console.log('\n# Group 9 — Security: SSRF, key hashing, SSE auth');
+
+  await tc('TC-9.1', 'SSRF classifier — private/loopback/metadata ranges', async () => {
+    assertEq(ssrf.classifyAddress('127.0.0.1'), 'loopback', '127.0.0.1');
+    assertEq(ssrf.classifyAddress('::1'), 'loopback', '::1');
+    assertEq(ssrf.classifyAddress('10.1.2.3'), 'blocked', '10.1.2.3');
+    assertEq(ssrf.classifyAddress('172.16.0.1'), 'blocked', '172.16.0.1');
+    assertEq(ssrf.classifyAddress('192.168.1.1'), 'blocked', '192.168.1.1');
+    assertEq(ssrf.classifyAddress('169.254.169.254'), 'blocked', 'metadata IP');
+    assertEq(ssrf.classifyAddress('100.64.0.1'), 'blocked', 'CGNAT');
+    assertEq(ssrf.classifyAddress('0.0.0.0'), 'blocked', '0.0.0.0');
+    assertEq(ssrf.classifyAddress('::ffff:10.0.0.1'), 'blocked', 'v4-mapped private');
+    assertEq(ssrf.classifyAddress('fe80::1'), 'blocked', 'v6 link-local');
+    assertEq(ssrf.classifyAddress('fd00::1'), 'blocked', 'v6 unique-local');
+    assertEq(ssrf.classifyAddress('8.8.8.8'), 'public', '8.8.8.8');
+    assertEq(ssrf.classifyAddress('::ffff:8.8.8.8'), 'public', 'v4-mapped public');
+    // Policy behavior (no DNS needed — literal IPs)
+    await ssrf.assertPublicDestination('http://8.8.8.8/hook', { policy: 'none' });
+    await ssrf.assertPublicDestination('http://127.0.0.1:9999/hook', { policy: 'loopback' });
+    let blocked = false;
+    try { await ssrf.assertPublicDestination('http://127.0.0.1/hook', { policy: 'none' }); }
+    catch (e) { blocked = e.code === 'SSRF_BLOCKED'; }
+    assert(blocked, 'loopback blocked under policy=none');
+    blocked = false;
+    try { await ssrf.assertPublicDestination('http://10.0.0.1/hook', { policy: 'loopback' }); }
+    catch (e) { blocked = e.code === 'SSRF_BLOCKED'; }
+    assert(blocked, 'private blocked under policy=loopback');
+  });
+
+  await tc('TC-9.2', 'Route creation rejects private/metadata destinations (400)', async () => {
+    const a = await createSink({ name: 'tc-9-2' });
+    const priv = await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: 'http://10.0.0.1/hook' },
+    });
+    assertEq(priv.status, 400, 'private 10/8 rejected');
+    assert(/not allowed/i.test(priv.body.error), `clear error message, got: ${priv.body.error}`);
+
+    const meta = await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: 'http://169.254.169.254/latest/meta-data/' },
+    });
+    assertEq(meta.status, 400, 'metadata IP rejected');
+
+    // Loopback allowed under the dev server's loopback policy
+    const ok = await req('POST', `/api/sinks/${a.sink_id}/routes`, {
+      headers: { 'x-api-key': a.api_key }, body: { url: `${targetBase}/ok-9-2` },
+    });
+    assertEq(ok.status, 201, 'loopback target allowed under dev policy');
+  });
+
+  await tc('TC-9.3', 'Delivery-time re-validation blocks a private destination (DNS rebinding defense)', async () => {
+    // Bypass route-creation validation by inserting the route directly —
+    // simulates a hostname that re-resolved to a private IP after creation.
+    const a = await createSink({ name: 'tc-9-3' });
+    const routeId = `tc93_route_${crypto.randomBytes(4).toString('hex')}`;
+    const now = new Date().toISOString();
+    db.prepare('INSERT INTO routes (id, sink_id, url, created_at) VALUES (?, ?, ?, ?)')
+      .run(routeId, a.sink_id, 'http://10.255.255.1:9/hook', now);
+    const eventId = `tc93_${crypto.randomBytes(4).toString('hex')}`;
+    db.prepare(
+      'INSERT INTO events (id, sink_id, provider, payload, received_at, status) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(eventId, a.sink_id, 'generic', '{"x":1}', now, 'pending');
+
+    const routes = db.prepare('SELECT * FROM routes WHERE sink_id = ?').all(a.sink_id);
+    const result = await fanout(db, eventId, routes, '{"x":1}', { 'content-type': 'application/json' });
+    assert(result && result.anySuccess === false, 'fanout reports failure');
+    assert(
+      result.attempts.length === 1 && /blocked destination/i.test(result.attempts[0].error_message || ''),
+      `attempt carries blocked-destination error, got: ${JSON.stringify(result.attempts)}`
+    );
+
+    const attempts = db.prepare(
+      'SELECT * FROM delivery_attempts WHERE event_id = ? AND route_id = ?'
+    ).all(eventId, routeId);
+    assertEq(attempts.length, 1, 'exactly one failed attempt recorded (no retries)');
+    assertEq(attempts[0].status, 'failed', 'attempt status');
+    return 'blocked before any connection was made';
+  });
+
+  await tc('TC-9.4', 'API keys stored hashed; plaintext authenticates, stored hash does not', async () => {
+    const a = await createSink({ name: 'tc-9-4' });
+    const row = db.prepare('SELECT api_key FROM sinks WHERE id = ?').get(a.sink_id);
+    assert(row.api_key.startsWith('sha256$'), `stored key is hashed, got: ${row.api_key.slice(0, 12)}...`);
+    assert(row.api_key !== a.api_key, 'stored value differs from plaintext');
+
+    const okAuth = await req('GET', '/api/sinks', { headers: { 'x-api-key': a.api_key } });
+    assertEq(okAuth.status, 200, 'plaintext key authenticates');
+
+    const hashAuth = await req('GET', '/api/sinks', { headers: { 'x-api-key': row.api_key } });
+    assertEq(hashAuth.status, 401, 'stored hash is not a credential');
+  });
+
+  await tc('TC-9.5', 'No plaintext keys remain in the sinks table (startup migration)', async () => {
+    const bad = db.prepare("SELECT COUNT(*) AS n FROM sinks WHERE api_key NOT LIKE 'sha256$%'").get();
+    assertEq(bad.n, 0, 'unhashed key count');
+  });
+
+  await tc('TC-9.6', 'SSE stream rejects ?key= query auth (401)', async () => {
+    const a = await createSink({ name: 'tc-9-6' });
+    const r = await req('GET', `/api/sinks/${a.sink_id}/stream?key=${a.api_key}`);
+    assertEq(r.status, 401, 'query-string key rejected');
+    assert(/query string/i.test(r.body.error), `explains header/session alternative, got: ${r.body.error}`);
+  });
+
+  await tc('TC-9.8', 'Connect-time lookup enforces policy (DNS rebinding cannot reach blocked IPs)', async () => {
+    // makeSafeLookup is wired into the fanout http(s) Agents, so the address
+    // the socket connects to is validated at connect time — even if a
+    // hostname re-resolves after the pre-check.
+    const lookupNone = ssrf.makeSafeLookup('none');
+    const blockedErr = await new Promise((resolve) => {
+      lookupNone('localhost', {}, (err) => resolve(err));
+    });
+    assert(blockedErr && blockedErr.code === 'SSRF_BLOCKED', 'localhost blocked under policy=none at connect time');
+
+    const lookupLoop = ssrf.makeSafeLookup('loopback');
+    const ok = await new Promise((resolve, reject) => {
+      lookupLoop('localhost', {}, (err, address, family) => err ? reject(err) : resolve({ address, family }));
+    });
+    assert(ssrf.classifyAddress(ok.address) === 'loopback', `localhost allowed under policy=loopback (got ${ok.address})`);
+  });
+
+  await tc('TC-9.9', 'Signup-created sink stores a hashed API key', async () => {
+    const email = `tc-9-9-${crypto.randomBytes(4).toString('hex')}@example.com`;
+    // Fetch the signup page for CSRF cookie + hidden field
+    const page = await fetch(`${BASE}/signup`);
+    const html = await page.text();
+    const setCookies = page.headers.getSetCookie ? page.headers.getSetCookie() : [page.headers.get('set-cookie')];
+    const cookieHeader = setCookies.filter(Boolean).map((c) => c.split(';')[0]).join('; ');
+    const csrf = (html.match(/name="_csrf" value="([^"]+)"/) || [])[1];
+    assert(csrf, 'signup page exposes CSRF token');
+
+    const resp = await fetch(`${BASE}/signup`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: cookieHeader },
+      body: `email=${encodeURIComponent(email)}&password=password123&_csrf=${csrf}`,
+    });
+    assertEq(resp.status, 302, 'signup succeeds');
+
+    const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    assert(user, 'user row created');
+    const sink = db.prepare('SELECT id, api_key FROM sinks WHERE user_id = ?').get(user.id);
+    assert(sink, 'sink auto-created at signup');
+    try {
+      assert(sink.api_key.startsWith('sha256$'), `signup sink key is hashed, got: ${sink.api_key.slice(0, 12)}...`);
+    } finally {
+      // Cleanup (signup sinks are not tc-prefixed)
+      db.prepare('DELETE FROM sinks WHERE user_id = ?').run(user.id);
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+      db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+    }
+  });
+
+  await tc('TC-9.7', 'SSE stream accepts API key via header', async () => {
+    const a = await createSink({ name: 'tc-9-7' });
+    const controller = new AbortController();
+    try {
+      const res = await fetch(`${BASE}/api/sinks/${a.sink_id}/stream`, {
+        headers: { 'x-api-key': a.api_key },
+        signal: controller.signal,
+      });
+      assertEq(res.status, 200, 'header-auth stream opens');
+      assert(
+        String(res.headers.get('content-type')).includes('text/event-stream'),
+        'content-type is text/event-stream'
+      );
+    } finally {
+      controller.abort();
+    }
+
+    // Wrong header key still rejected
+    const bad = await fetch(`${BASE}/api/sinks/${a.sink_id}/stream`, {
+      headers: { 'x-api-key': 'nope_invalid_key' },
+    });
+    assertEq(bad.status, 401, 'invalid header key rejected');
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 async function main() {
@@ -1038,6 +1226,7 @@ async function main() {
     await group7_usageEnforcement();
     await group8_outbox();
     await group_dashboardCsrf();
+    await group9_security();
   } finally {
     cleanFixtures();
     await stopTarget();

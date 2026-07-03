@@ -556,15 +556,17 @@ router.post('/dashboard/api/sinks', auth.requireUser, express.json(), auth.requi
     return res.status(400).json({ error: `webhook_secret is required for provider '${provider}'` });
   }
   const { v4: uuidv4 } = require('uuid');
+  const { hashApiKey } = require('../lib/apikeys');
   const id = uuidv4();
   const apiKey = uuidv4();
   const now = new Date().toISOString();
+  // Only the hash is persisted; the plaintext key is returned exactly once.
   db.prepare(`
     INSERT INTO sinks (id, name, provider, api_key, webhook_secret, created_at, user_id)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, String(name).trim(), provider, apiKey, webhook_secret || null, now, req.user.id);
+  `).run(id, String(name).trim(), provider, hashApiKey(apiKey), webhook_secret || null, now, req.user.id);
   const sink = db.prepare('SELECT * FROM sinks WHERE id = ?').get(id);
-  return res.status(201).json(sink);
+  return res.status(201).json({ ...sink, api_key: apiKey });
 });
 
 // ---------- Dashboard ----------
@@ -577,19 +579,19 @@ router.get('/dashboard', auth.requireUser, (req, res) => {
 
   if (!sink) {
     const { v4: uuidv4 } = require('uuid');
+    const { hashApiKey } = require('../lib/apikeys');
     const sinkId = uuidv4();
     const apiKey = uuidv4();
     const now = new Date().toISOString();
     db.prepare(`
       INSERT INTO sinks (id, name, provider, api_key, created_at, user_id)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(sinkId, 'My first sink', 'generic', apiKey, now, req.user.id);
+    `).run(sinkId, 'My first sink', 'generic', hashApiKey(apiKey), now, req.user.id);
     sink = db.prepare('SELECT * FROM sinks WHERE id = ?').get(sinkId);
   }
 
   const userInitial = (req.user.email || '?').charAt(0).toUpperCase();
   const userEmailJs = auth.safeJsonForScript(req.user.email);
-  const apiKeyJs = auth.safeJsonForScript(sink.api_key);
   const sinkIdJs = auth.safeJsonForScript(sink.id);
   const csrfToken = auth.ensureCsrfToken(req, res);
 
@@ -825,12 +827,13 @@ ${THEME_SCRIPT}
     setTimeout(function(){ setView('logs'); }, 100);
   }
 
-  const API_KEY = ${apiKeyJs};
   let SINK_ID = ${sinkIdJs};
   let selectedSinkId = SINK_ID;
   const USER_EMAIL = ${userEmailJs};
   const CSRF_TOKEN = ${auth.safeJsonForScript(csrfToken)};
-  const headers = { 'Authorization': 'Bearer ' + API_KEY, 'Content-Type': 'application/json' };
+  // API calls authenticate via the session cookie (sent automatically on
+  // same-origin fetches); mutating requests also carry the CSRF token.
+  const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF_TOKEN };
   let currentSinks = [];
   let activeSseConnections = [];
 
@@ -1173,13 +1176,13 @@ ${THEME_SCRIPT}
     // demo sink when loadSinks() hasn't resolved yet or returned nothing.
     var sinksToConnect = currentSinks.length > 0
       ? currentSinks
-      : [{ id: SINK_ID, api_key: API_KEY }];
+      : [{ id: SINK_ID }];
 
     sinksToConnect.forEach(function (sink) {
-      var sinkKey = sink.api_key || API_KEY;
-      var es = new EventSource(
-        '/api/sinks/' + sink.id + '/stream?key=' + sinkKey
-      );
+      // Session-cookie auth: browsers send cookies with same-origin
+      // EventSource requests automatically, so no key is needed (and
+      // query-string keys are rejected by the server).
+      var es = new EventSource('/api/sinks/' + sink.id + '/stream');
 
       es.onmessage = function (event) {
         if (ssePollingInterval) {

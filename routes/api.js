@@ -4,41 +4,98 @@ const db = require('../db');
 const { getMonthlyEventCount, getEventLimit, incrementMonthlyUsage } = require('../lib/metering');
 const natsLib = require('../lib/nats');
 const outbox = require('../lib/outbox');
+const auth = require('../lib/auth');
+const { hashApiKey, findSinkByApiKey } = require('../lib/apikeys');
+const ssrf = require('../lib/ssrf');
 
 const router = express.Router();
 
 // ---------------------------------------------------------------------------
-// Auth middleware — validates Bearer token, attaches req.sink
+// Auth middleware — validates the API key (stored hashed; the presented
+// plaintext token is hashed and compared) and attaches req.sink.
+//
+// Session fallback: the dashboard authenticates with its session cookie
+// instead of an API key (plaintext keys are shown only once at creation, so
+// the dashboard can no longer embed one). Mutating requests via session auth
+// additionally require the CSRF token (double-submit cookie).
 // ---------------------------------------------------------------------------
-function requireAuth(req, res, next) {
-  // Accept either `Authorization: Bearer <key>` or `X-Api-Key: <key>`.
+function extractToken(req) {
   const authHeader = req.headers['authorization'] || '';
   const xApiKey = req.headers['x-api-key'] || '';
-  const token = authHeader.startsWith('Bearer ')
+  return authHeader.startsWith('Bearer ')
     ? authHeader.slice(7).trim()
     : (xApiKey ? String(xApiKey).trim() : null);
+}
 
-  if (!token) {
-    return res.status(401).json({ error: 'Missing API key (use Authorization: Bearer <key> or X-Api-Key header)' });
+function sessionCsrfOk(req) {
+  const method = (req.method || 'GET').toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
+  return auth.verifyCsrf(req);
+}
+
+function requireAuth(req, res, next) {
+  const token = extractToken(req);
+
+  if (token) {
+    const sink = findSinkByApiKey(db, token);
+    if (!sink) {
+      return res.status(401).json({ error: 'Invalid API key' });
+    }
+    req.sink = sink;
+    return next();
   }
 
-  const sink = db.prepare('SELECT * FROM sinks WHERE api_key = ?').get(token);
-  if (!sink) {
-    return res.status(401).json({ error: 'Invalid API key' });
+  // Session-cookie fallback (dashboard): use the user's primary sink.
+  const user = auth.getSessionUser(req);
+  if (user) {
+    if (!sessionCsrfOk(req)) {
+      return res.status(403).json({ error: 'Invalid or missing CSRF token' });
+    }
+    const sink = db.prepare(
+      'SELECT * FROM sinks WHERE user_id = ? ORDER BY created_at ASC LIMIT 1'
+    ).get(user.id);
+    if (sink) {
+      req.sink = sink;
+      req.user = user;
+      return next();
+    }
   }
 
-  req.sink = sink;
-  next();
+  return res.status(401).json({ error: 'Missing API key (use Authorization: Bearer <key> or X-Api-Key header)' });
 }
 
 // For routes that also take :sinkId — verify the sink belongs to the bearer
+// (API key) or to the signed-in user (session cookie).
 function requireSinkAuth(req, res, next) {
-  requireAuth(req, res, () => {
-    if (req.sink.id !== req.params.sinkId) {
+  const token = extractToken(req);
+
+  if (token) {
+    const sink = findSinkByApiKey(db, token);
+    if (!sink) {
+      return res.status(401).json({ error: 'Invalid API key' });
+    }
+    if (sink.id !== req.params.sinkId) {
       return res.status(401).json({ error: 'Invalid API key for this sink' });
     }
-    next();
-  });
+    req.sink = sink;
+    return next();
+  }
+
+  const user = auth.getSessionUser(req);
+  if (user) {
+    if (!sessionCsrfOk(req)) {
+      return res.status(403).json({ error: 'Invalid or missing CSRF token' });
+    }
+    const sink = db.prepare('SELECT * FROM sinks WHERE id = ?').get(req.params.sinkId);
+    if (sink && sink.user_id === user.id) {
+      req.sink = sink;
+      req.user = user;
+      return next();
+    }
+    return res.status(401).json({ error: 'Sink not found or not owned by this account' });
+  }
+
+  return res.status(401).json({ error: 'Missing API key (use Authorization: Bearer <key> or X-Api-Key header)' });
 }
 
 // ---------------------------------------------------------------------------
@@ -65,10 +122,12 @@ router.post('/sinks', (req, res) => {
   const apiKey = uuidv4();
   const createdAt = new Date().toISOString();
 
+  // Only the SHA-256 hash is persisted; the plaintext key is returned exactly
+  // once in this response and cannot be recovered later.
   db.prepare(`
     INSERT INTO sinks (id, name, provider, api_key, webhook_secret, created_at)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(sinkId, name, provider, apiKey, webhook_secret || null, createdAt);
+  `).run(sinkId, name, provider, hashApiKey(apiKey), webhook_secret || null, createdAt);
 
   return res.status(201).json({
     sink_id: sinkId,
@@ -122,7 +181,7 @@ router.get('/sinks/:sinkId/routes', requireSinkAuth, (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/sinks/:sinkId/routes — add a route to a sink
 // ---------------------------------------------------------------------------
-router.post('/sinks/:sinkId/routes', requireSinkAuth, (req, res) => {
+router.post('/sinks/:sinkId/routes', requireSinkAuth, async (req, res) => {
   const { url } = req.body || {};
 
   if (!url) {
@@ -131,6 +190,15 @@ router.post('/sinks/:sinkId/routes', requireSinkAuth, (req, res) => {
 
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
     return res.status(400).json({ error: 'url must be a valid HTTP/HTTPS URL' });
+  }
+
+  // SSRF guard: resolve the destination and reject private/loopback/link-local/
+  // metadata addresses. Re-checked again at delivery time (lib/fanout.js) to
+  // defeat DNS rebinding.
+  try {
+    await ssrf.assertPublicDestination(url);
+  } catch (err) {
+    return res.status(400).json({ error: `Destination not allowed: ${err.message}` });
   }
 
   // Enforce per-tier route cap (Free: 3, Starter: 10).
@@ -357,7 +425,12 @@ router.post('/sinks/:sinkId/dlq/:eventId/redrive', requireSinkAuth, async (req, 
 // ---------------------------------------------------------------------------
 // GET /api/sinks/:sinkId/stream — SSE endpoint for live event status updates
 //
-// Auth: ?key=<api_key> query param (EventSource cannot set custom headers).
+// Auth: session cookie (dashboard EventSource — browsers send cookies with
+// same-origin EventSource requests) or an API key header (Authorization:
+// Bearer / X-Api-Key) for programmatic consumers. Query-string keys (?key=)
+// are explicitly rejected: they leak into server logs, proxy logs, and
+// browser history.
+//
 // Subscribes to events.status.<sinkId> on NATS core and forwards each message
 // as a `data:` SSE frame. Sends `: ping` keepalives every 25 seconds.
 // If NATS is unavailable the stream stays open and retries on a backoff
@@ -366,19 +439,34 @@ router.post('/sinks/:sinkId/dlq/:eventId/redrive', requireSinkAuth, async (req, 
 // ---------------------------------------------------------------------------
 router.get('/sinks/:sinkId/stream', async (req, res) => {
   const { sinkId } = req.params;
-  const key = req.query.key;
 
-  if (!key) {
-    return res.status(401).json({ error: 'Missing key query parameter' });
+  if (req.query.key !== undefined) {
+    return res.status(401).json({
+      error: 'API key in query string is not allowed. Use an Authorization: Bearer or X-Api-Key header, or a signed-in session.',
+    });
   }
 
-  const sink = db.prepare('SELECT * FROM sinks WHERE api_key = ?').get(key);
-  if (!sink) {
-    return res.status(401).json({ error: 'Invalid API key' });
-  }
-
-  if (sink.id !== sinkId) {
-    return res.status(401).json({ error: 'Invalid API key for this sink' });
+  const token = extractToken(req);
+  let sink = null;
+  if (token) {
+    const found = findSinkByApiKey(db, token);
+    if (!found) {
+      return res.status(401).json({ error: 'Invalid API key' });
+    }
+    if (found.id !== sinkId) {
+      return res.status(401).json({ error: 'Invalid API key for this sink' });
+    }
+    sink = found;
+  } else {
+    const user = auth.getSessionUser(req);
+    if (!user) {
+      return res.status(401).json({ error: 'Authentication required (API key header or session)' });
+    }
+    const found = db.prepare('SELECT * FROM sinks WHERE id = ?').get(sinkId);
+    if (!found || found.user_id !== user.id) {
+      return res.status(401).json({ error: 'Sink not found or not owned by this account' });
+    }
+    sink = found;
   }
 
   // Commit SSE headers immediately — the stream stays open even while NATS is
